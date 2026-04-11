@@ -1,0 +1,24 @@
+import express, { Express, Request, Response } from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { errorHandler } from './middlewares/errorHandler';
+
+dotenv.config();
+
+const app: Express = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// Health Check Route
+app.get('/health', (req: Request, res: Response) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Apply Global Error Handler
+app.use(errorHandler);
+
+app.listen(port, () => {
+    console.log(`[server]: Server is running at http://localhost:${port}`);
+});
