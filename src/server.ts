@@ -1,9 +1,9 @@
+import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { errorHandler } from './middlewares/errorHandler';
-
-dotenv.config();
+import webhookRoutes from './routes/webhookRoutes';
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
@@ -15,6 +15,9 @@ app.use(express.json());
 app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Webhook Routes
+app.use('/api', webhookRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
