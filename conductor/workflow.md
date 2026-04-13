@@ -49,12 +49,20 @@ All tasks follow a strict lifecycle:
    - Propose a clear, concise commit message e.g, `feat(ui): Create basic HTML structure for calculator`.
    - Perform the commit.
 
-9. **Automate Notes & Plan Update (`conductor:sync`):**
-   - **Action:** Instead of manually extracting commit hashes and writing git notes, run the automation script:
+9. **Attach Task Summary with Git Notes:**
+   - **Step 9.1: Get Commit Hash:** Obtain the hash of the commit just created.
+   - **Step 9.2: Draft Note Content:** Create a detailed summary of the task.
+   - **Step 9.3: Attach Note:** Use the `git notes` command:
      ```bash
-     npm run conductor:sync
+     # The note content from the previous step is passed via the -m flag
+     git notes add -m "<note content>" <commit_hash>
      ```
-   - **What it does:** This script will automatically extract the just-completed commit SHA, package your task annotations into a `git note` attached to that commit, mark the task as `[x]` in `plan.md`, and commit the updated `plan.md`. This minimizes manual overhead during TDD cycles.
+10. **Get and Record Task Commit SHA:**
+    - **Step 10.1: Update Plan:** Read `plan.md`, find the completed task, and add `[Commit: <commit_hash>]` to its line.
+    - **Step 10.2: Write Plan:** Write the updated content back to `plan.md`.
+11. **Commit Plan Update:**
+    - **Action:** Stage the modified `plan.md` file.
+    - **Action:** Commit this change with a descriptive message like `chore: sync plan with task completion`.
 
 ### Phase Completion Verification and Checkpointing Protocol
 
