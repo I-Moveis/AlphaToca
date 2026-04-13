@@ -10,7 +10,7 @@
 - **ORM:** Prisma
 
 ## AI & RAG Components
-- **Orchestration:** LangChain/LangGraph (Node.js)
+- **Orchestration:** LangChain (Node.js)
 - **Vector Store:** PostgreSQL (`pgvector`)
 
 ## Communication & Messaging

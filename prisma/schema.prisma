@@ -1,0 +1,159 @@
+// 1. Configuração do Banco e Gerador
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"] // Necessário para o pgvector
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector] // Habilita a extensão vetorial no Postgres
+}
+
+// 2. Enums (Restrições de Valores)
+enum Role {
+  TENANT
+  LANDLORD
+  ADMIN
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  IN_NEGOTIATION
+  RENTED
+}
+
+enum ChatStatus {
+  ACTIVE_BOT
+  WAITING_HUMAN
+  RESOLVED
+}
+
+enum SenderType {
+  BOT
+  TENANT
+  LANDLORD
+}
+
+enum ProcessStatus {
+  TRIAGE
+  VISIT_SCHEDULED
+  CONTRACT_ANALYSIS
+  CLOSED
+}
+
+enum DocumentType {
+  IDENTITY
+  INCOME_PROOF
+  CONTRACT
+}
+
+// 3. Modelos (Tabelas)
+
+model User {
+  id              String   @id @default(uuid())
+  name            String
+  phoneNumber     String   @unique @map("phone_number")
+  role            Role     @default(TENANT)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relacionamentos inversos (Obrigações do Prisma)
+  properties      Property[]      @relation("LandlordProperties")
+  chatSessions    ChatSession[]   @relation("TenantChats")
+  rentalProcesses RentalProcess[] @relation("TenantProcesses")
+
+  @@map("users")
+}
+
+model Property {
+  id          String         @id @default(uuid())
+  landlordId  String         @map("landlord_id")
+  title       String
+  description String
+  price       Decimal        @db.Decimal(10, 2)
+  status      PropertyStatus @default(AVAILABLE)
+  address     String
+
+  // Relacionamentos
+  landlord        User            @relation("LandlordProperties", fields: [landlordId], references: [id])
+  rentalProcesses RentalProcess[]
+
+  @@map("properties")
+}
+
+model ChatSession {
+  id        String     @id @default(uuid())
+  tenantId  String     @map("tenant_id")
+  status    ChatStatus @default(ACTIVE_BOT)
+  startedAt DateTime   @default(now()) @map("started_at")
+
+  // Relacionamentos
+  tenant   User      @relation("TenantChats", fields: [tenantId], references: [id])
+  messages Message[]
+
+  @@map("chat_sessions")
+}
+
+model Message {
+  id         String     @id @default(uuid())
+  sessionId  String     @map("session_id")
+  senderType SenderType @map("sender_type")
+  content    String     @db.Text
+  mediaUrl   String?    @map("media_url") // Opcional (?) para lidar com fotos/áudios
+  timestamp  DateTime   @default(now())
+
+  // Relacionamentos
+  session ChatSession @relation(fields: [sessionId], references: [id])
+
+  @@map("messages")
+}
+
+model RentalProcess {
+  id         String        @id @default(uuid())
+  tenantId   String        @map("tenant_id")
+  propertyId String?       @map("property_id") // Pode ser nulo durante a triagem
+  status     ProcessStatus @default(TRIAGE)
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  // Relacionamentos
+  tenant      User                 @relation("TenantProcesses", fields: [tenantId], references: [id])
+  property    Property?            @relation(fields: [propertyId], references: [id])
+  insights    AiExtractedInsight[]
+  documents   RentalDocument[]
+
+  @@map("rental_processes")
+}
+
+model AiExtractedInsight {
+  id              String   @id @default(uuid())
+  rentalProcessId String   @map("rental_process_id")
+  insightKey      String   @map("insight_key")
+  insightValue    String   @map("insight_value")
+  extractedAt     DateTime @default(now()) @map("extracted_at")
+
+  // Relacionamentos
+  rentalProcess RentalProcess @relation(fields: [rentalProcessId], references: [id])
+
+  @@map("ai_extracted_insights")
+}
+
+model KnowledgeDocument {
+  id        String                 @id @default(uuid())
+  title     String
+  content   String                 @db.Text
+  // Configuração do vetor de embeddings gerado pelo LangChain (ex: OpenAI usa 1536 dimensões)
+  embedding Unsupported("vector(1536)")?
+
+  @@map("knowledge_documents")
+}
+
+model RentalDocument {
+  id              String       @id @default(uuid())
+  rentalProcessId String       @map("rental_process_id")
+  documentType    DocumentType @map("document_type")
+  fileUrl         String       @map("file_url")
+
+  // Relacionamentos
+  rentalProcess RentalProcess @relation(fields: [rentalProcessId], references: [id])
+
+  @@map("rental_documents")
+}
