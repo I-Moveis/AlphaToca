@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
+import userRoutes from './routes/userRoutes';
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
@@ -18,6 +19,9 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Webhook Routes
 app.use('/api', webhookRoutes);
+
+// User Routes
+app.use('/api', userRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
