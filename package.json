@@ -10,6 +10,7 @@
     "conductor:sync": "echo 'Run automation script'"
   },
   "dependencies": {
+    "@prisma/client": "^7.7.0",
     "bullmq": "^5.73.4",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
