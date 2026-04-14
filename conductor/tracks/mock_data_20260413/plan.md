@@ -14,7 +14,7 @@
 - [x] Task: Create Message and Vector Embedding Generators [969643b]
     - [ ] Write failing test: Create tests for `generateMessages` and `generateEmbeddings` functions.
     - [ ] Implement: Write `generateMessages` and `generateEmbeddings` utilizing Faker.js and random float arrays.
-- [ ] Task: Conductor - User Manual Verification 'Mock Data Generators' (Protocol in workflow.md)
+- [~] Task: Conductor - User Manual Verification 'Mock Data Generators' (Protocol in workflow.md)
 
 ## Phase 3: Seeding Script Implementation
 - [ ] Task: Implement `prisma/seed.ts` execution logic
