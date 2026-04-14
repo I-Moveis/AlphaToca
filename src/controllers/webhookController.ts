@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { messageQueue } from '../queues/whatsappQueue';
-import { WhatsAppWebhookPayload } from '../types/whatsapp';
+import { WhatsAppWebhookPayload, WhatsAppWebhookSchema } from '../types/whatsapp';
 
 export const verifyWebhook = (req: Request, res: Response) => {
     const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -23,7 +23,7 @@ export const receiveMessage = async (req: Request, res: Response) => {
     res.status(200).send('EVENT_RECEIVED');
 
     try {
-        const payload = req.body as WhatsAppWebhookPayload;
+        const payload = WhatsAppWebhookSchema.parse(req.body);
 
         if (payload.object === 'whatsapp_business_account') {
             await messageQueue.add('whatsapp-message', payload, {
