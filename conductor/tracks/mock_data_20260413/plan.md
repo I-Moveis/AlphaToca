@@ -20,4 +20,4 @@
 - [x] Task: Implement `prisma/seed.ts` execution logic [a9dda58]
     - [ ] Write failing test: Create an integration test verifying the database is correctly populated when seed functions are called.
     - [ ] Implement: Write `prisma/seed.ts` that sequentially clears the database (`deleteMany`), inserts records using generators, and safely disconnects the Prisma client.
-- [ ] Task: Conductor - User Manual Verification 'Seeding Script Implementation' (Protocol in workflow.md)
+- [~] Task: Conductor - User Manual Verification 'Seeding Script Implementation' (Protocol in workflow.md)
