@@ -1,39 +1,44 @@
-import { PropertyStatus } from '@prisma/client';
-
-export interface PropertyMock {
-  id: string;
-  landlordId: string;
-  title: string;
-  description: string;
-  price: number;
-  status: PropertyStatus;
-  address: string;
-}
-
-let mockProperties: PropertyMock[] = [
-  {
-    id: '1',
-    landlordId: 'user-1',
-    title: 'Apartamento aconchegante',
-    description: 'Um belo apartamento no centro.',
-    price: 1500,
-    status: 'AVAILABLE',
-    address: 'Rua das Flores, 123'
-  }
-];
+import prisma from '../config/prisma';
+import { Property, PropertyStatus } from '@prisma/client';
+import { CreatePropertyInput, UpdatePropertyInput } from '../utils/propertyValidation';
 
 export const propertyService = {
-  async updateProperty(id: string, data: Partial<PropertyMock>) {
-    const index = mockProperties.findIndex(p => p.id === id);
-    if (index === -1) return null;
-
-    mockProperties[index] = { ...mockProperties[index], ...data };
-    return mockProperties[index];
+  async createProperty(data: CreatePropertyInput): Promise<Property> {
+    return prisma.property.create({
+      data,
+    });
   },
 
-  async deleteProperty(id: string) {
-    const initialLength = mockProperties.length;
-    mockProperties = mockProperties.filter(p => p.id !== id);
-    return mockProperties.length < initialLength;
+  async listProperties(): Promise<Property[]> {
+    return prisma.property.findMany({
+      orderBy: { id: 'asc' },
+    });
+  },
+
+  async getPropertyById(id: string): Promise<Property | null> {
+    return prisma.property.findUnique({
+      where: { id },
+    });
+  },
+
+  async updateProperty(id: string, data: UpdatePropertyInput): Promise<Property | null> {
+    const exists = await prisma.property.findUnique({ where: { id } });
+    if (!exists) return null;
+
+    return prisma.property.update({
+      where: { id },
+      data,
+    });
+  },
+
+  async deleteProperty(id: string): Promise<boolean> {
+    try {
+      await prisma.property.delete({
+        where: { id },
+      });
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 };

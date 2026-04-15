@@ -1,26 +1,82 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { propertyService } from '../services/propertyService';
+import { createPropertySchema, updatePropertySchema } from '../utils/propertyValidation';
 
 export const propertyController = {
-  async update(req: Request, res: Response) {
-    const { id } = req.params;
-    const property = await propertyService.updateProperty(id, req.body);
-
-    if (!property) {
-      return res.status(404).json({ error: 'Property not found' });
+  async create(req: Request, res: Response, next: NextFunction) {
+    try {
+      const validatedData = createPropertySchema.parse(req.body);
+      const property = await propertyService.createProperty(validatedData);
+      return res.status(201).json(property);
+    } catch (error) {
+      next(error);
     }
-
-    return res.status(200).json(property);
   },
 
-  async delete(req: Request, res: Response) {
-    const { id } = req.params;
-    const success = await propertyService.deleteProperty(id);
-
-    if (!success) {
-      return res.status(404).json({ error: 'Property not found' });
+  async list(req: Request, res: Response, next: NextFunction) {
+    try {
+      const properties = await propertyService.listProperties();
+      return res.status(200).json(properties);
+    } catch (error) {
+      next(error);
     }
+  },
 
-    return res.status(204).send();
+  async getById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const property = await propertyService.getPropertyById(id);
+
+      if (!property) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Property not found' }]
+        });
+      }
+
+      return res.status(200).json(property);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async update(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const validatedData = updatePropertySchema.parse(req.body);
+      const property = await propertyService.updateProperty(id, validatedData);
+
+      if (!property) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Property not found' }]
+        });
+      }
+
+      return res.status(200).json(property);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async delete(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const success = await propertyService.deleteProperty(id);
+
+      if (!success) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Property not found' }]
+        });
+      }
+
+      return res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
   }
 };
