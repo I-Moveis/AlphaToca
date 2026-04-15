@@ -13,7 +13,6 @@
   },
   "include": [
     "src/**/*",
-    "prisma/**/*",
-    "prisma.config.ts"
+    "prisma/**/*"
   ]
 }
