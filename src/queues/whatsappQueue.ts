@@ -2,10 +2,11 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { WhatsAppWebhookPayload } from '../types/whatsapp';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+if (!process.env.REDIS_URL) {
+    throw new Error('[Queue] REDIS_URL não definida no ambiente. A fila não pode iniciar sem uma conexão Redis configurada.');
+}
 
-// BullMQ recommends maxRetriesPerRequest: null in IORedis connections
-const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+const connection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
 
 export const messageQueue = new Queue<WhatsAppWebhookPayload>('whatsapp-messages', {
     connection,

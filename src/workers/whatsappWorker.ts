@@ -3,8 +3,20 @@ import IORedis from 'ioredis';
 import { WhatsAppWebhookPayload } from '../types/whatsapp';
 import prisma from '../config/db';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+if (!process.env.REDIS_URL) {
+    throw new Error('[Worker] REDIS_URL não definida no ambiente. O Worker não pode iniciar sem uma conexão Redis configurada.');
+}
+const connection = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+    lazyConnect: false,
+    retryStrategy: () => null,
+});
+
+connection.on('error', (err) => {
+    console.error(`\x1b[31m[Worker ERRO]\x1b[0m Redis connection failed: ${err.message}`);
+    process.exit(1);
+});
 
 export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
     'whatsapp-messages',
