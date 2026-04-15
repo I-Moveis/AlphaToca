@@ -1,9 +1,11 @@
 import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
+import propertyRoutes from './routes/propertyRoutes';
+import userRoutes from './routes/userRoutes';
+import './workers/whatsappWorker';
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
@@ -16,8 +18,12 @@ app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook Routes
+// Routes
 app.use('/api', webhookRoutes);
+app.use('/api', propertyRoutes);
+
+// User Routes
+app.use('/api', userRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);

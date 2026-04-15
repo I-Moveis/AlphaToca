@@ -1,6 +1,6 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { messageQueue } from '../queues/whatsappQueue';
-import { WhatsAppWebhookPayload } from '../types/whatsapp';
+import { WhatsAppWebhookPayload, WhatsAppWebhookSchema } from '../types/whatsapp';
 
 export const verifyWebhook = (req: Request, res: Response) => {
     const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -18,12 +18,13 @@ export const verifyWebhook = (req: Request, res: Response) => {
     }
 };
 
-export const receiveMessage = async (req: Request, res: Response) => {
-    // WhatsApp Meta requires an immediate 200 OK response to prevent timeouts and redeliveries.
-    res.status(200).send('EVENT_RECEIVED');
-
+export const receiveMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const payload = req.body as WhatsAppWebhookPayload;
+        // 1. Zod parse primeiro. Se não bater com o payload esperado da Meta, ele jogará exceção.
+        const payload = WhatsAppWebhookSchema.parse(req.body);
+
+        // 2. Se o dado é seguro e válido, a WhatsApp Meta requires an immediate 200 OK.
+        res.status(200).send('EVENT_RECEIVED');
 
         if (payload.object === 'whatsapp_business_account') {
             await messageQueue.add('whatsapp-message', payload, {
@@ -34,6 +35,7 @@ export const receiveMessage = async (req: Request, res: Response) => {
             });
         }
     } catch (error) {
-        console.error('[Webhook] Error persisting webhook message to queue:', error);
+        // Envia o erro (ZodError, etc) pro nosso Global errorHandler formatar o 400 Bad Request.
+        next(error); 
     }
 };
