@@ -1,4 +1,4 @@
-import prisma from '../config/prisma';
+import prisma from '../config/db';
 import { Property, PropertyStatus } from '@prisma/client';
 import { CreatePropertyInput, UpdatePropertyInput } from '../utils/propertyValidation';
 
