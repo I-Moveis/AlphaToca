@@ -8,6 +8,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const errorHandler_1 = require("./middlewares/errorHandler");
 const webhookRoutes_1 = __importDefault(require("./routes/webhookRoutes"));
+const userRoutes_1 = __importDefault(require("./routes/userRoutes"));
 require("./workers/whatsappWorker");
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3000;
@@ -19,6 +20,8 @@ app.get('/health', (req, res) => {
 });
 // Webhook Routes
 app.use('/api', webhookRoutes_1.default);
+// User Routes
+app.use('/api', userRoutes_1.default);
 // Apply Global Error Handler
 app.use(errorHandler_1.errorHandler);
 app.listen(port, () => {
