@@ -3,6 +3,7 @@ import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
+import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
 import './workers/whatsappWorker';
 
@@ -17,8 +18,9 @@ app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook Routes
+// Routes
 app.use('/api', webhookRoutes);
+app.use('/api', propertyRoutes);
 
 // User Routes
 app.use('/api', userRoutes);
