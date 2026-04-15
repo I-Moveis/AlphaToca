@@ -7,7 +7,7 @@ import {
   generateKnowledgeDocuments,
 } from './generators';
 
-const prisma = new PrismaClient();
+import prisma from '../src/config/db';
 
 export async function main() {
   console.log('Starting seed...');

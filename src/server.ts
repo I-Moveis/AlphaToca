@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
 import userRoutes from './routes/userRoutes';
+import './workers/whatsappWorker';
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
