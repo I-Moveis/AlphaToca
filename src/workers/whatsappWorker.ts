@@ -2,6 +2,7 @@ import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { WhatsAppWebhookPayload } from '../types/whatsapp';
 import prisma from '../config/db';
+import { sendMessage } from '../services/whatsappService';
 
 if (!process.env.REDIS_URL) {
     throw new Error('[Worker] REDIS_URL não definida no ambiente. O Worker não pode iniciar sem uma conexão Redis configurada.');
@@ -25,7 +26,6 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
         
         console.log(`\x1b[32m[Worker]\x1b[0m Processando Job ID ${job.id}`);
         
-        // Extração segura do payload usando Optional Chaining e cast
         const changeValue = (payload as any).entry?.[0]?.changes?.[0]?.value;
         if (!changeValue) {
             return { success: true, reason: 'ignored_empty_changes' };
@@ -34,19 +34,24 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
         const contact = changeValue.contacts?.[0];
         const message = changeValue.messages?.[0];
 
-        // Ignora status de leitura ou eventos sem a raiz de messages
         if (!message || !contact) {
             return { success: true, reason: 'ignored_not_message' };
         }
 
+        const wamid: string = message.id;
+        if (wamid) {
+            const existing = await prisma.message.findUnique({ where: { wamid } });
+            if (existing) {
+                console.log(`\x1b[33m[Worker]\x1b[0m Mensagem ${wamid} já processada. Ignorando.`);
+                return { success: true, reason: 'duplicate_wamid' };
+            }
+        }
+
         const phoneNumber = contact.wa_id;
         const contactName = contact.profile?.name || 'Lead';
-        
-        // Fallback de texto para mídias
         const messageText = message.text?.body || '[Mídia Recebida]';
 
         try {
-            // Operação 1: Sync de Usuário (Upsert)
             const user = await prisma.user.upsert({
                 where: { phoneNumber },
                 update: { name: contactName },
@@ -57,7 +62,6 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                 }
             });
 
-            // Operação 2: Find/Create ChatSession
             let chatSession = await prisma.chatSession.findFirst({
                 where: {
                     tenantId: user.id,
@@ -77,22 +81,32 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                 });
             }
 
-            // Operação 3: Salvar a Mensagem
             await prisma.message.create({
                 data: {
+                    wamid: wamid || null,
                     sessionId: chatSession.id,
                     senderType: 'TENANT',
                     content: messageText
                 }
             });
 
-            console.log(`\x1b[32m[Worker]\x1b[0m Mensagem de ${phoneNumber} persistida com sucesso!`);
-            return { success: true, saved: true };
-
-        } catch (dbError) {
+        } catch (dbError: any) {
+            if (dbError?.code === 'P2002' && dbError?.meta?.target?.includes('wamid')) {
+                console.log(`\x1b[33m[Worker]\x1b[0m Mensagem ${wamid} já existe no banco (unique constraint). Ignorando.`);
+                return { success: true, reason: 'duplicate_wamid_db' };
+            }
             console.error(`\x1b[31m[Worker]\x1b[0m Falha de DB no Job ${job.id}:`, dbError);
-            throw dbError; // BullMQ gerenciará o retry
+            throw dbError;
         }
+
+        try {
+            await sendMessage(phoneNumber, `Olá! Sou o assistente do AlphaToca. Recebi sua mensagem: ${messageText}`);
+        } catch (sendError) {
+            console.error(`\x1b[31m[Worker]\x1b[0m Falha ao enviar mensagem WhatsApp: ${(sendError as Error).message}`);
+        }
+
+        console.log(`\x1b[32m[Worker]\x1b[0m Mensagem de ${phoneNumber} processada com sucesso!`);
+        return { success: true, saved: true };
     },
     { connection }
 );

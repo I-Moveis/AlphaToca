@@ -96,10 +96,11 @@ model ChatSession {
 
 model Message {
   id         String     @id @default(uuid())
+  wamid      String?    @unique @map("wamid")
   sessionId  String     @map("session_id")
   senderType SenderType @map("sender_type")
   content    String     @db.Text
-  mediaUrl   String?    @map("media_url") // Opcional (?) para lidar com fotos/áudios
+  mediaUrl   String?    @map("media_url")
   timestamp  DateTime   @default(now())
 
   // Relacionamentos
