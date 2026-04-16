@@ -51,11 +51,11 @@ enum DocumentType {
 // 3. Modelos (Tabelas)
 
 model User {
-  id              String   @id @default(uuid())
-  name            String
-  phoneNumber     String   @unique @map("phone_number")
-  role            Role     @default(TENANT)
-  createdAt       DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid())
+  name        String
+  phoneNumber String   @unique @map("phone_number")
+  role        Role     @default(TENANT)
+  createdAt   DateTime @default(now()) @map("created_at")
 
   // Relacionamentos inversos (Obrigações do Prisma)
   properties      Property[]      @relation("LandlordProperties")
@@ -77,8 +77,23 @@ model Property {
   // Relacionamentos
   landlord        User            @relation("LandlordProperties", fields: [landlordId], references: [id])
   rentalProcesses RentalProcess[]
+  images          PropertyImage[]
 
   @@map("properties")
+}
+
+model PropertyImage {
+  id         String   @id @default(uuid())
+  propertyId String   @map("property_id")
+  url        String // URL da imagem no storage (ex: S3, Cloudinary)
+  isCover    Boolean  @default(false) @map("is_cover") // Identifica se é a foto de capa
+  caption    String? // Descrição do ambiente (ex: "Sala de Estar")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relacionamentos
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("property_images")
 }
 
 model ChatSession {
@@ -116,10 +131,10 @@ model RentalProcess {
   createdAt  DateTime      @default(now()) @map("created_at")
 
   // Relacionamentos
-  tenant      User                 @relation("TenantProcesses", fields: [tenantId], references: [id])
-  property    Property?            @relation(fields: [propertyId], references: [id])
-  insights    AiExtractedInsight[]
-  documents   RentalDocument[]
+  tenant    User                 @relation("TenantProcesses", fields: [tenantId], references: [id])
+  property  Property?            @relation(fields: [propertyId], references: [id])
+  insights  AiExtractedInsight[]
+  documents RentalDocument[]
 
   @@map("rental_processes")
 }
@@ -138,9 +153,9 @@ model AiExtractedInsight {
 }
 
 model KnowledgeDocument {
-  id        String                 @id @default(uuid())
+  id        String                       @id @default(uuid())
   title     String
-  content   String                 @db.Text
+  content   String                       @db.Text
   // Configuração do vetor de embeddings gerado pelo LangChain (ex: OpenAI usa 1536 dimensões)
   embedding Unsupported("vector(1536)")?
 
