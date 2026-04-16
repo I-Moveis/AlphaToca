@@ -20,7 +20,12 @@ export const verifyWebhook = (req: Request, res: Response) => {
 
 export const receiveMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        // 1. Zod parse primeiro. Se não bater com o payload esperado da Meta, ele jogará exceção.
+        const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+        if (value?.statuses) {
+            console.error(`\x1b[35m--- RECIBO DE STATUS DA META ---\x1b[0m\n${JSON.stringify(value.statuses, null, 2)}`);
+            return res.sendStatus(200);
+        }
+
         const payload = WhatsAppWebhookSchema.parse(req.body);
 
         // 2. Se o dado é seguro e válido, a WhatsApp Meta requires an immediate 200 OK.
@@ -28,8 +33,7 @@ export const receiveMessage = async (req: Request, res: Response, next: NextFunc
 
         if (payload.object === 'whatsapp_business_account') {
             await messageQueue.add('whatsapp-message', payload, {
-                attempts: 3,
-                backoff: { type: 'exponential', delay: 1000 },
+                attempts: 1,
                 removeOnComplete: true,
                 removeOnFail: 100
             });
