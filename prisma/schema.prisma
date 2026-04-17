@@ -48,6 +48,13 @@ enum DocumentType {
   CONTRACT
 }
 
+enum MessageStatus {
+  failed
+  sent
+  delivered
+  read
+}
+
 // 3. Modelos (Tabelas)
 
 model User {
@@ -100,8 +107,9 @@ model Message {
   sessionId  String     @map("session_id")
   senderType SenderType @map("sender_type")
   content    String     @db.Text
-  mediaUrl   String?    @map("media_url")
-  timestamp  DateTime   @default(now())
+  mediaUrl   String?      @map("media_url")
+  status     MessageStatus @default(sent) @map("status")
+  timestamp  DateTime     @default(now())
 
   // Relacionamentos
   session ChatSession @relation(fields: [sessionId], references: [id])

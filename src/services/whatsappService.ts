@@ -66,7 +66,8 @@ export async function sendMessage(to: string, text: string): Promise<any> {
                 data: {
                     sessionId: chatSession.id,
                     senderType: 'BOT',
-                    content: text
+                    content: text,
+                    wamid: response.data.messages[0].id,
                 }
             });
             console.log(`\x1b[34m[WhatsAppService]\x1b[0m Resposta salva no banco para ${to}`);
