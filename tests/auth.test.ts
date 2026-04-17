@@ -60,4 +60,9 @@ describe('Auth Middleware & User Sync Integration', () => {
     // Verify that upsertUserFromAuth0 was called
     expect(userService.upsertUserFromAuth0).toHaveBeenCalled();
   });
+
+  it('should return 401 Unauthorized for /api/users if no token provided', async () => {
+    const response = await request(app).get('/api/users');
+    expect(response.status).toBe(401);
+  });
 });
