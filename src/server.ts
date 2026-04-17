@@ -6,12 +6,16 @@ import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
 import './workers/whatsappWorker';
+import { setupSwagger } from './config/swagger';
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// Swagger Documentation
+setupSwagger(app);
 
 // Health Check Route
 app.get('/health', (req: Request, res: Response) => {
