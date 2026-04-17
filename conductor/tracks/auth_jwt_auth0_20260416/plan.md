@@ -14,13 +14,13 @@
 - [x] Task: Conductor - User Manual Verification 'Auth Middleware Implementation' (Protocol in workflow.md)
 
 ## Phase 3: User Synchronization & Identity Management (TDD)
-- [ ] Task: Implement user synchronization service
-    - [ ] **Red:** Write tests for \`upsertUserFromAuth0\` (creation and update)
-    - [ ] **Green:** Implement service logic to sync profile data and roles
-    - [ ] **Refactor:** Optimize Prisma queries and role mapping logic
-- [ ] Task: Integrate synchronization into the request lifecycle
-    - [ ] **Red:** Write tests to ensure user exists in DB after authenticated request
-    - [ ] **Green:** Add sync logic to the auth middleware or a separate wrapper
+- [x] Task: Implement user synchronization service (2c46f99)
+    - [x] **Red:** Write tests for \`upsertUserFromAuth0\` (creation and update)
+    - [x] **Green:** Implement service logic to sync profile data and roles
+    - [x] **Refactor:** Optimize Prisma queries and role mapping logic
+- [x] Task: Integrate synchronization into the request lifecycle (c1162e4)
+    - [x] **Red:** Write tests to ensure user exists in DB after authenticated request
+    - [x] **Green:** Add sync logic to the auth middleware or a separate wrapper
 - [ ] Task: Conductor - User Manual Verification 'User Synchronization & Identity Management' (Protocol in workflow.md)
 
 ## Phase 4: Route Security & Integration
