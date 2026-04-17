@@ -3,6 +3,9 @@ import { userController } from '../controllers/userController';
 
 const router = Router();
 
+// Authenticated user's own profile (must be before :id to avoid conflict)
+router.get('/users/me', userController.getMe);
+
 /**
  * @swagger
  * /users:

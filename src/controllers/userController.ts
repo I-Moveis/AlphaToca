@@ -3,6 +3,28 @@ import { userService } from '../services/userService';
 import { UserSchema, UserUpdateSchema } from '../utils/userValidation';
 
 export const userController = {
+  /**
+   * GET /api/users/me
+   * Returns the authenticated user's profile from the local database.
+   */
+  async getMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const localUser = (req as any).localUser;
+
+      if (!localUser) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Authenticated user profile not found in database.' }]
+        });
+      }
+
+      return res.status(200).json(localUser);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const users = await userService.getAllUsers();
