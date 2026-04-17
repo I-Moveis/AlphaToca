@@ -1,5 +1,6 @@
 import app from './app';
 import './workers/whatsappWorker';
+import { setupSwagger } from './config/swagger';
 
 const port = process.env.PORT || 3000;
 

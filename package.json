@@ -8,6 +8,8 @@
     "dev": "nodemon src/server.ts",
     "build": "tsc",
     "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "conductor:sync": "echo 'Run automation script'"
   },
   "dependencies": {
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@faker-js/faker": "^10.4.0",
+    "@prisma/config": "^7.7.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.0",

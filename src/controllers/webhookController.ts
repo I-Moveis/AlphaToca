@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { messageQueue } from '../queues/whatsappQueue';
-import { WhatsAppWebhookPayload, WhatsAppWebhookSchema } from '../types/whatsapp';
+import { WhatsAppWebhookSchema } from '../schemas/whatsappSchema';
+import { updateMessageStatus } from '../services/messageStatusService';
 
 export const verifyWebhook = (req: Request, res: Response) => {
     const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -18,28 +20,38 @@ export const verifyWebhook = (req: Request, res: Response) => {
     }
 };
 
-export const receiveMessage = async (req: Request, res: Response, next: NextFunction) => {
+export const receiveMessage = async (req: Request, res: Response, _next: NextFunction) => {
     try {
         const value = req.body?.entry?.[0]?.changes?.[0]?.value;
         if (value?.statuses) {
-            console.error(`\x1b[35m--- RECIBO DE STATUS DA META ---\x1b[0m\n${JSON.stringify(value.statuses, null, 2)}`);
-            return res.sendStatus(200);
+            console.log(`\x1b[35m--- RECIBO DE STATUS DA META ---\x1b[0m\n${JSON.stringify(value.statuses, null, 2)}`);
+            for (const s of value.statuses as Array<{ id: string; status: 'failed' | 'sent' | 'delivered' | 'read' }>) {
+                updateMessageStatus({ id: s.id, status: s.status }).catch((err) => {
+                    console.error('[Webhook] Erro ao processar status:', err);
+                });
+            }
+            res.sendStatus(200);
+            return;
         }
 
         const payload = WhatsAppWebhookSchema.parse(req.body);
 
-        // 2. Se o dado é seguro e válido, a WhatsApp Meta requires an immediate 200 OK.
         res.status(200).send('EVENT_RECEIVED');
 
         if (payload.object === 'whatsapp_business_account') {
             await messageQueue.add('whatsapp-message', payload, {
                 attempts: 1,
                 removeOnComplete: true,
-                removeOnFail: 100
+                removeOnFail: 100,
             });
         }
     } catch (error) {
-        // Envia o erro (ZodError, etc) pro nosso Global errorHandler formatar o 400 Bad Request.
-        next(error); 
+        if (error instanceof ZodError) {
+            console.error(`\x1b[31m[Webhook ZodError]\x1b[0m Payload inválido rejeitado: ${JSON.stringify(error.errors)}`);
+            res.status(200).send('EVENT_RECEIVED');
+            return;
+        }
+        console.error('[Webhook] Erro inesperado:', error);
+        res.status(200).send('EVENT_RECEIVED');
     }
 };
