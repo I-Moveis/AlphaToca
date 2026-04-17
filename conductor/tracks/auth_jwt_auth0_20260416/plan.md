@@ -23,8 +23,8 @@
     - [x] **Green:** Add sync logic to the auth middleware or a separate wrapper
 - [x] Task: Conductor - User Manual Verification 'User Synchronization & Identity Management' (Protocol in workflow.md)
 
-## Phase 4: Route Security & Integration
+## Phase 4: Route Security & Integration [checkpoint: 519f4de]
 - [x] Task: Secure existing application routes (4c686e6)
     - [x] **Red:** Write integration tests for \`/api/properties\` and \`/api/users\` expecting 401
     - [x] **Green:** Apply auth middleware to all routes in \`src/server.ts\` or individual routers
-- [ ] Task: Conductor - User Manual Verification 'Route Security & Integration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Route Security & Integration' (Protocol in workflow.md)
