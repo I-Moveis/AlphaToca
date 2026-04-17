@@ -15,7 +15,7 @@ describe('User Synchronization Service', () => {
     vi.clearAllMocks();
   });
 
-  it('should upsert a user from Auth0 data', async () => {
+  it('should upsert a user from Auth0 data using auth0Sub', async () => {
     const auth0Data = {
       sub: 'auth0|123',
       name: 'John Doe',
@@ -24,23 +24,24 @@ describe('User Synchronization Service', () => {
     };
 
     (prisma.user.upsert as any).mockResolvedValue({
-      id: 'auth0|123',
+      id: 'some-uuid',
+      auth0Sub: 'auth0|123',
       name: 'John Doe',
       phoneNumber: '+1234567890',
       role: 'LANDLORD',
     });
 
-    const result = await (userService as any).upsertUserFromAuth0(auth0Data);
+    const result = await userService.upsertUserFromAuth0(auth0Data);
 
     expect(prisma.user.upsert).toHaveBeenCalledWith({
-      where: { id: 'auth0|123' },
+      where: { auth0Sub: 'auth0|123' },
       update: {
         name: 'John Doe',
         phoneNumber: '+1234567890',
         role: 'LANDLORD',
       },
       create: {
-        id: 'auth0|123',
+        auth0Sub: 'auth0|123',
         name: 'John Doe',
         phoneNumber: '+1234567890',
         role: 'LANDLORD',
@@ -57,17 +58,40 @@ describe('User Synchronization Service', () => {
     };
 
     (prisma.user.upsert as any).mockResolvedValue({
-      id: 'auth0|456',
+      id: 'some-uuid-2',
+      auth0Sub: 'auth0|456',
       name: 'Jane Doe',
       phoneNumber: '+0987654321',
       role: 'TENANT',
     });
 
-    const result = await (userService as any).upsertUserFromAuth0(auth0Data);
+    const result = await userService.upsertUserFromAuth0(auth0Data);
 
     expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ role: 'TENANT' }),
+      create: expect.objectContaining({ role: 'TENANT', auth0Sub: 'auth0|456' }),
     }));
     expect(result.role).toBe('TENANT');
+  });
+
+  it('should use "pending" phoneNumber when not provided in Auth0 data', async () => {
+    const auth0Data = {
+      sub: 'auth0|789',
+      name: 'No Phone User',
+    };
+
+    (prisma.user.upsert as any).mockResolvedValue({
+      id: 'some-uuid-3',
+      auth0Sub: 'auth0|789',
+      name: 'No Phone User',
+      phoneNumber: 'pending',
+      role: 'TENANT',
+    });
+
+    const result = await userService.upsertUserFromAuth0(auth0Data);
+
+    expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ phoneNumber: 'pending' }),
+    }));
+    expect(result.phoneNumber).toBe('pending');
   });
 });

@@ -14,6 +14,12 @@ export const userService = {
     });
   },
 
+  async getUserByAuth0Sub(auth0Sub: string): Promise<User | null> {
+    return await prisma.user.findUnique({
+      where: { auth0Sub }
+    });
+  },
+
   async createUser(data: { name: string; phoneNumber: string; role: Role }): Promise<User> {
     return await prisma.user.create({
       data
@@ -42,26 +48,34 @@ export const userService = {
     }
   },
 
-  async upsertUserFromAuth0(auth0Data: any): Promise<User> {
-    const { sub, name, phone_number } = auth0Data;
-    const roles = auth0Data['https://alphatoca.com/roles'] || [];
-    
-    // Map roles to our enum
+  /**
+   * Upsert a user from Auth0 JWT payload.
+   * Uses auth0Sub (the "sub" claim) as the unique identifier for sync.
+   * If the user doesn't exist, creates a new one with a UUID id.
+   * If the user exists, updates their profile data.
+   */
+  async upsertUserFromAuth0(auth0Payload: Record<string, unknown>): Promise<User> {
+    const sub = auth0Payload.sub as string;
+    const name = (auth0Payload.name as string) || 'Unknown';
+    const phoneNumber = auth0Payload.phone_number as string | undefined;
+    const roles = (auth0Payload['https://alphatoca.com/roles'] as string[]) || [];
+
+    // Map Auth0 roles to our enum
     let role: Role = 'TENANT';
     if (roles.includes('ADMIN')) role = 'ADMIN';
     else if (roles.includes('LANDLORD')) role = 'LANDLORD';
 
     return await prisma.user.upsert({
-      where: { id: sub },
+      where: { auth0Sub: sub },
       update: {
         name,
-        phoneNumber: phone_number,
+        ...(phoneNumber && { phoneNumber }),
         role
       },
       create: {
-        id: sub,
+        auth0Sub: sub,
         name,
-        phoneNumber: phone_number,
+        phoneNumber: phoneNumber || 'pending',
         role
       }
     });

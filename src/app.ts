@@ -5,7 +5,10 @@ import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
-import { checkJwt, authSyncMiddleware } from './middlewares/authMiddleware';
+import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
+
+// Validate Auth0 configuration at startup
+validateAuthConfig();
 
 const app: Express = express();
 
