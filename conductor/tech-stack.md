@@ -9,6 +9,10 @@
 - **Database:** PostgreSQL with `pgvector`
 - **ORM:** Prisma
 
+## Identity & Security
+- **Provider:** Auth0
+- **Standard:** JSON Web Tokens (JWT)
+
 ## Background Processing & Queues
 - **Queue Engine:** Redis
 - **Job Manager:** BullMQ
