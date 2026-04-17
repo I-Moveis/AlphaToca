@@ -40,5 +40,30 @@ export const userService = {
     } catch (error) {
       return false; // User not found
     }
+  },
+
+  async upsertUserFromAuth0(auth0Data: any): Promise<User> {
+    const { sub, name, phone_number } = auth0Data;
+    const roles = auth0Data['https://alphatoca.com/roles'] || [];
+    
+    // Map roles to our enum
+    let role: Role = 'TENANT';
+    if (roles.includes('ADMIN')) role = 'ADMIN';
+    else if (roles.includes('LANDLORD')) role = 'LANDLORD';
+
+    return await prisma.user.upsert({
+      where: { id: sub },
+      update: {
+        name,
+        phoneNumber: phone_number,
+        role
+      },
+      create: {
+        id: sub,
+        name,
+        phoneNumber: phone_number,
+        role
+      }
+    });
   }
 };
