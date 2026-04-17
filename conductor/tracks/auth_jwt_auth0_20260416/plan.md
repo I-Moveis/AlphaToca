@@ -7,10 +7,10 @@
 - [x] Task: Conductor - User Manual Verification 'Foundation & Infrastructure' (Protocol in workflow.md)
 
 ## Phase 2: Auth Middleware Implementation (TDD)
-- [ ] Task: Create JWT validation middleware
-    - [ ] **Red:** Write tests to verify 401 response for missing/invalid tokens
-    - [ ] **Green:** Implement middleware using \`auth()\` from express-oauth2-jwt-bearer
-    - [ ] **Refactor:** Clean up middleware structure and error handling
+- [x] Task: Create JWT validation middleware (a67edf2)
+    - [x] **Red:** Write tests to verify 401 response for missing/invalid tokens
+    - [x] **Green:** Implement middleware using \`auth()\` from express-oauth2-jwt-bearer
+    - [x] **Refactor:** Clean up middleware structure and error handling
 - [ ] Task: Conductor - User Manual Verification 'Auth Middleware Implementation' (Protocol in workflow.md)
 
 ## Phase 3: User Synchronization & Identity Management (TDD)
