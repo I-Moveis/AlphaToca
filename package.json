@@ -7,6 +7,9 @@
     "start": "ts-node src/server.ts",
     "dev": "nodemon src/server.ts",
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "conductor:sync": "echo 'Run automation script'"
   },
   "dependencies": {
