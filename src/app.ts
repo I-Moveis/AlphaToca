@@ -5,7 +5,7 @@ import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
-import { checkJwt } from './middlewares/authMiddleware';
+import { checkJwt, authSyncMiddleware } from './middlewares/authMiddleware';
 
 const app: Express = express();
 
@@ -17,12 +17,15 @@ app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Protected routes middleware chain
+const authStack = [checkJwt, authSyncMiddleware];
+
 // Routes
 app.use('/api', webhookRoutes);
-app.use('/api', checkJwt, propertyRoutes);
+app.use('/api', authStack, propertyRoutes);
 
 // User Routes
-app.use('/api', checkJwt, userRoutes);
+app.use('/api', authStack, userRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
