@@ -52,31 +52,47 @@ export const userService = {
    * Upsert a user from Auth0 JWT payload.
    * Uses auth0Sub (the "sub" claim) as the unique identifier for sync.
    * If the user doesn't exist, creates a new one with a UUID id.
-   * If the user exists, updates their profile data.
+   * If the user exists, updates their profile data — but only updates role
+   * when the token actually carries a roles claim, to avoid downgrading an
+   * existing user on a token that lacks the custom claim.
    */
   async upsertUserFromAuth0(auth0Payload: Record<string, unknown>): Promise<User> {
-    const sub = auth0Payload.sub as string;
+    const sub = auth0Payload.sub;
+    if (typeof sub !== 'string' || sub.length === 0) {
+      throw new Error('Auth0 payload is missing the "sub" claim.');
+    }
+
     const name = (auth0Payload.name as string) || 'Unknown';
     const phoneNumber = auth0Payload.phone_number as string | undefined;
-    const roles = (auth0Payload['https://alphatoca.com/roles'] as string[]) || [];
+    const rolesClaim = auth0Payload['https://alphatoca.com/roles'];
+    const roles = Array.isArray(rolesClaim)
+      ? rolesClaim.map((r) => String(r).toUpperCase())
+      : null;
 
-    // Map Auth0 roles to our enum
-    let role: Role = 'TENANT';
-    if (roles.includes('ADMIN')) role = 'ADMIN';
-    else if (roles.includes('LANDLORD')) role = 'LANDLORD';
+    // Map Auth0 roles to our enum. Only derive a role when the claim is present.
+    let mappedRole: Role | undefined;
+    if (roles) {
+      if (roles.includes('ADMIN')) mappedRole = 'ADMIN';
+      else if (roles.includes('LANDLORD')) mappedRole = 'LANDLORD';
+      else mappedRole = 'TENANT';
+    }
+
+    // phoneNumber is @unique in the schema, so a shared "pending" placeholder
+    // would collide for the second user without a phone claim. Scope it per sub.
+    const placeholderPhone = `pending:${sub}`;
 
     return await prisma.user.upsert({
       where: { auth0Sub: sub },
       update: {
         name,
         ...(phoneNumber && { phoneNumber }),
-        role
+        ...(mappedRole && { role: mappedRole })
       },
       create: {
         auth0Sub: sub,
         name,
-        phoneNumber: phoneNumber || 'pending',
-        role
+        phoneNumber: phoneNumber || placeholderPhone,
+        role: mappedRole ?? 'TENANT'
       }
     });
   }

@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { userController } from '../controllers/userController';
+import { requireRole } from '../middlewares/authMiddleware';
 
 const router = Router();
+
+const adminOnly = requireRole('ADMIN');
 
 // Authenticated user's own profile (must be before :id to avoid conflict)
 router.get('/users/me', userController.getMe);
@@ -28,7 +31,7 @@ router.get('/users/me', userController.getMe);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/users', userController.getAll);
+router.get('/users', adminOnly, userController.getAll);
 
 /**
  * @swagger
@@ -63,7 +66,7 @@ router.get('/users', userController.getAll);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/users/:id', userController.getById);
+router.get('/users/:id', adminOnly, userController.getById);
 
 /**
  * @swagger
@@ -97,7 +100,7 @@ router.get('/users/:id', userController.getById);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/users', userController.create);
+router.post('/users', adminOnly, userController.create);
 
 /**
  * @swagger
@@ -132,7 +135,7 @@ router.post('/users', userController.create);
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/users/:id', userController.update);
+router.put('/users/:id', adminOnly, userController.update);
 
 /**
  * @swagger
@@ -155,6 +158,6 @@ router.put('/users/:id', userController.update);
  *       500:
  *         description: Erro interno do servidor
  */
-router.delete('/users/:id', userController.delete);
+router.delete('/users/:id', adminOnly, userController.delete);
 
 export default router;
