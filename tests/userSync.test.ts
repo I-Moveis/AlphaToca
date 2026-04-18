@@ -73,7 +73,7 @@ describe('User Synchronization Service', () => {
     expect(result.role).toBe('TENANT');
   });
 
-  it('should use "pending" phoneNumber when not provided in Auth0 data', async () => {
+  it('should use a sub-scoped placeholder phoneNumber when not provided in Auth0 data', async () => {
     const auth0Data = {
       sub: 'auth0|789',
       name: 'No Phone User',
@@ -83,15 +83,43 @@ describe('User Synchronization Service', () => {
       id: 'some-uuid-3',
       auth0Sub: 'auth0|789',
       name: 'No Phone User',
-      phoneNumber: 'pending',
+      phoneNumber: 'pending:auth0|789',
       role: 'TENANT',
     });
 
     const result = await userService.upsertUserFromAuth0(auth0Data);
 
     expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ phoneNumber: 'pending' }),
+      create: expect.objectContaining({ phoneNumber: 'pending:auth0|789' }),
     }));
-    expect(result.phoneNumber).toBe('pending');
+    expect(result.phoneNumber).toBe('pending:auth0|789');
+  });
+
+  it('should not downgrade role when the roles claim is absent from the token', async () => {
+    const auth0Data = {
+      sub: 'auth0|existing-admin',
+      name: 'Admin User',
+      phone_number: '+5511999999999',
+    };
+
+    (prisma.user.upsert as any).mockResolvedValue({
+      id: 'admin-uuid',
+      auth0Sub: 'auth0|existing-admin',
+      name: 'Admin User',
+      phoneNumber: '+5511999999999',
+      role: 'ADMIN',
+    });
+
+    await userService.upsertUserFromAuth0(auth0Data);
+
+    const call = (prisma.user.upsert as any).mock.calls[0][0];
+    expect(call.update).not.toHaveProperty('role');
+    expect(call.create.role).toBe('TENANT');
+  });
+
+  it('should throw when the Auth0 payload has no "sub" claim', async () => {
+    await expect(
+      userService.upsertUserFromAuth0({ name: 'No Sub' } as any)
+    ).rejects.toThrow(/sub/);
   });
 });

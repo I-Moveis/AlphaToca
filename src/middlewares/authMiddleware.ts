@@ -1,4 +1,4 @@
-import { auth, UnauthorizedError } from 'express-oauth2-jwt-bearer';
+import { auth } from 'express-oauth2-jwt-bearer';
 import { Request, Response, NextFunction } from 'express';
 import { Role } from '@prisma/client';
 import { userService } from '../services/userService';
@@ -33,26 +33,31 @@ export const checkJwt = auth({
 
 /**
  * Middleware to synchronize user data from Auth0 to our local database.
- * This should be used after checkJwt.
- * Also attaches the local user to req for downstream use.
+ * Must be used after checkJwt. Attaches the local user to req.localUser.
+ *
+ * If sync fails, the request is rejected (we cannot authorize without a
+ * corresponding local user record).
  */
 export const authSyncMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authData = req.auth;
 
-    if (authData && authData.payload) {
-      const user = await userService.upsertUserFromAuth0(
-        authData.payload as Record<string, unknown>
-      );
-      // Attach local user data for downstream controllers
-      (req as any).localUser = user;
+    if (!authData?.payload) {
+      return res.status(401).json({
+        status: 401,
+        code: 'UNAUTHORIZED',
+        messages: [{ message: 'Missing authentication payload.' }]
+      });
     }
 
+    const user = await userService.upsertUserFromAuth0(
+      authData.payload as Record<string, unknown>
+    );
+    req.localUser = user;
     next();
   } catch (error) {
     console.error('[AuthSync] Error syncing user:', error);
-    // We continue even if sync fails to not block the user
-    next();
+    next(error);
   }
 };
 
@@ -65,7 +70,7 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
  */
 export const requireRole = (...allowedRoles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const localUser = (req as any).localUser;
+    const localUser = req.localUser;
 
     if (!localUser) {
       return res.status(403).json({
