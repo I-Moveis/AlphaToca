@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
-
+# NOTA: O package-lock.json foi removido do gitignore. Ele DEVE ser versionado por segurança (hashes de integridade).
 
 # Build
 dist/
@@ -9,17 +8,37 @@ dist-ssr/
 *.local
 
 # Environment
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
+!.env.example
+
+# Credentials & Keys
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*service-account*.json
+credentials.json
+secrets.json
+
+# Local Databases (Evita vazar dados reais de dev)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
 
 # Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
+
+# AI Agents & Security Logs (Prevenção contra vazamento de conversas/chaves)
+.claude/
+.gemini_security/
+# Se quiser ignorar as skills locais da sua IA, descomente a linha abaixo
+# .agents/
 
 # OS
 .DS_Store
