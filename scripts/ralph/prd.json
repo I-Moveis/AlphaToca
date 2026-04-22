@@ -66,8 +66,8 @@
         "Typecheck passes; tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Created src/services/ragRetrieverService.ts exporting retrieveRelevantChunks(query, overrideDeps?) -> Promise<RetrievedChunk[]> with { id, content, title, score }. Embeds the query via OpenAIEmbeddings (same EMBEDDING_MODEL as ingestion), then runs one $queryRawUnsafe against knowledge_documents using pgvector cosine distance (<=>), ORDER BY ASC LIMIT K, WHERE embedding IS NOT NULL. Score is computed as 1 - distance. Uses the deps-injection pattern from ingestKnowledge so tests can mock prisma + embedder. Blank queries short-circuit to []. Default deps are cached (lazy OpenAI client init) so importing the module does NOT require env vars. New unit test tests/ragRetrieverService.test.ts (7 tests) verifies: blank-query no-op, embedding is forwarded, SQL includes embedding IS NOT NULL + ORDER BY + LIMIT, vector literal param shape, default K = RETRIEVER_K, ordering is preserved, K limit honored, per-call k override, and string-distance parsing. 57 tests green; typecheck clean."
     },
     {
       "id": "US-005",

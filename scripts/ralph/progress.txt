@@ -17,6 +17,9 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
 - Text splitting is served by `@langchain/textsplitters` (separate package, added as a dep in US-003). `langchain@^1.3.3` no longer re-exports `RecursiveCharacterTextSplitter` from `langchain/text_splitter`. Import from `"@langchain/textsplitters"` everywhere.
 - Ingestion script pattern: keep a pure `runIngestion(deps)` function (deps object with `{ prisma, embedder, splitter, listMarkdownFiles, readFile }`) + a thin CLI wrapper that constructs real `OpenAIEmbeddings` / `RecursiveCharacterTextSplitter` / prisma singleton. Makes the hash-skip / insert / update / delete logic trivial to unit-test with mocked deps, and mirrors how US-004+ retriever/chain services should be structured.
 - Vector literals for pgvector go in as a string of the form `"[v1,v2,...]"` passed to `$executeRawUnsafe` with `$N::vector` cast — never interpolate the array directly into the SQL string.
+- Retrieval uses `$queryRawUnsafe` with the cosine-distance operator `embedding <=> $1::vector`. Compute similarity as `1 - distance` (pgvector returns distance, NOT similarity). `score >= SIMILARITY_THRESHOLD` is the gate for "trust the LLM answer" vs. "hand off to a human".
+- Services that need LLM/embedding clients should cache the constructed client in a module-level `let defaultDepsCache = null` + `getDefaultDeps()` helper. That way the module can be imported in tests without requiring `OPENAI_API_KEY`, but production callers still get a warm singleton.
+- Prisma raw returns of numeric columns (e.g. pgvector distance) can come back as JS `number` OR as `string` depending on the driver — always coerce with `typeof x === "string" ? parseFloat(x) : x` at the boundary.
 
 ---
 
@@ -66,4 +69,28 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
   - Vector-column writes via Prisma raw: pass the array as a string literal `"[v1,v2,...]"` and cast with `$N::vector` in the SQL. Do NOT use `$executeRaw` tagged-template with a `number[]` — it will not coerce correctly.
   - When mocking `$queryRawUnsafe` in vitest, cast the `vi.fn` back to the Prisma method type (`as unknown as IngestDeps["prisma"]["$queryRawUnsafe"]`) so `strict: true` TS compilation passes despite the generic.
   - The ingestion script is idempotent: second run on unchanged files yields `inserted=0 updated=0 skipped=N deleted=0` — verified by the `skips chunks whose contentHash matches` test. If US-008's eval script ever wants a "fresh" ingestion, have it delete by `source_path` first rather than relying on re-runs doing something.
+---
+
+## 2026-04-21 - US-004
+- Implemented `src/services/ragRetrieverService.ts`:
+  - Exports `retrieveRelevantChunks(query, overrideDeps?): Promise<RetrievedChunk[]>` where `RetrievedChunk = { id, content, title, score }`.
+  - Embeds the query via `OpenAIEmbeddings` using the same `EMBEDDING_MODEL` as ingestion.
+  - Single `$queryRawUnsafe` against `knowledge_documents` using pgvector cosine: `SELECT id, content, title, (embedding <=> $1::vector) AS distance ... WHERE embedding IS NOT NULL ORDER BY embedding <=> $1::vector ASC LIMIT $2`.
+  - Score is `1 - distance` (distance → similarity). Blank/empty-string queries short-circuit to `[]` without embedding or hitting the DB.
+  - Exposes a `RetrieverDeps` interface (`{ prisma, embedder, k? }`) with `QueryEmbedder` = `{ embedQuery(text) }` for easy mocking; default deps (real OpenAI client + prisma singleton) are lazily built and cached so importing the module does NOT require `OPENAI_API_KEY`.
+- Unit test `tests/ragRetrieverService.test.ts` (7 new cases) verifies:
+  - Blank query returns `[]` without touching embedder/prisma.
+  - Query embedding is forwarded; SQL contains `embedding IS NOT NULL`, `ORDER BY embedding <=>`, `LIMIT`.
+  - Vector literal param is the `[v1,v2,...]` string and default K is `RETRIEVER_K`.
+  - Ordering returned by the SQL query is preserved and scores are descending (since distance asc).
+  - K limit is honored and a per-call `k` override via deps works.
+  - String distances from the pgvector driver are coerced via `parseFloat`.
+- Files changed: `src/services/ragRetrieverService.ts` (new), `tests/ragRetrieverService.test.ts` (new), `scripts/ralph/prd.json`, `scripts/ralph/progress.txt`.
+- Typecheck (`npx tsc --noEmit`) is clean; `npm test` green at 57 tests across 9 files (was 50 across 8).
+- **Learnings for future iterations:**
+  - Repo already had `@langchain/openai` installed — `OpenAIEmbeddings` exposes `embedQuery(text)` for single strings (distinct from `embedDocuments(texts)` which is batch). US-005 should reuse the same `QueryEmbedder` shape if it needs to embed the session's last user turn.
+  - Prefer `$queryRawUnsafe` with two explicit params (vector literal as `$1`, K as `$2`) over tagged-template `$queryRaw`: pgvector needs `$1::vector` casts and the tagged template won't emit the cast cleanly. Safe because both params are non-user-controlled (vector comes from OpenAI, K is a numeric constant).
+  - Place the `WHERE embedding IS NOT NULL` filter BEFORE the `ORDER BY embedding <=> $1::vector` so the planner can skip null rows; also guards against ingestion-in-flight rows where embedding hasn't been written yet.
+  - For US-005: the retriever returns chunks in descending-score order, so checking `chunks[0].score >= SIMILARITY_THRESHOLD` is sufficient for the handoff gate — no need to sort or max-scan.
+  - US-005's chain service should follow the same deps-injection + cached-default pattern so its unit tests can mock both the retriever AND the Claude LLM without env vars.
 ---
