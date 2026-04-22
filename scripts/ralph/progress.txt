@@ -5,7 +5,7 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
 ## Codebase Patterns
 - Prisma client singleton lives in `src/config/db.ts` (reuse via `import prisma from "../config/db"`) — do NOT instantiate a second `PrismaClient`.
 - Tests use `vitest` (config at `vitest.config.ts`). Test files live in `tests/` at repo root, not colocated.
-- Pre-existing typecheck error in `src/scripts/seed-knowledge.ts` (missing `langchain/text_splitter` import path). Treat as known noise — only gate on typecheck delta for your changes, or fix it as part of US-003.
+- `npx tsc --noEmit` should be clean end-to-end (no known noise). If a new error appears, it came from your changes — do NOT treat it as pre-existing. (Prior `seed-knowledge.ts` error was fixed in US-003 by switching to `@langchain/textsplitters`.)
 - `KnowledgeDocument.embedding` is `Unsupported("vector(1536)")` in Prisma — writes/reads must use `$executeRawUnsafe` / `$queryRawUnsafe` with `::vector` casts. Never interpolate user input.
 - `langchain@^1.3.3` is the v1 API — use LCEL `RunnableSequence` / `ChatPromptTemplate`, NOT the deprecated `ConversationalRetrievalChain`.
 - Project uses `dotenv` for secrets; fail-fast on missing keys at boot rather than returning `undefined` deep in a call chain.
@@ -13,7 +13,10 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
 - `prisma migrate dev` refuses to run non-interactively in this harness. Use this two-step workaround: (1) `prisma migrate diff --from-migrations ./prisma/migrations --to-schema-datamodel ./prisma/schema.prisma --shadow-database-url <local_shadow> --script` to emit SQL; (2) write it to `prisma/migrations/<TS>_<name>/migration.sql`; (3) `prisma migrate deploy` with local env overrides to apply.
 - Shadow DB (`alphatoca_shadow`) exists on the local Docker postgres for migration diffs; pgvector extension already enabled on both local DBs.
 - `KnowledgeDocument` now has ingestion-tracking fields: `sourcePath`, `chunkIndex`, `contentHash`, `createdAt`, `updatedAt`. Compound unique index on `(sourcePath, chunkIndex)` — use this for upserts. Index on `contentHash` for hash-skip lookups.
-- The existing `prisma/seed.ts` + `prisma/generators.ts` insert `KnowledgeDocument` rows via `$executeRawUnsafe` without the new NOT NULL columns — they will fail at runtime post-migration. US-003 should replace the seed path or update the generator to supply `source_path`, `chunk_index`, `content_hash`, `updated_at`.
+- The existing `prisma/seed.ts` + `prisma/generators.ts` insert `KnowledgeDocument` rows via `$executeRawUnsafe` without the new NOT NULL columns — they will fail at runtime post-migration. US-003 did NOT fix this (the real RAG ingestion path is `npm run ingest:knowledge`); the generator path is still broken. If anyone runs `npm run seed`, update `prisma/generators.ts::generateKnowledgeDocuments` to supply `source_path` / `chunk_index` / `content_hash` / `updated_at`, then match in `prisma/seed.ts`.
+- Text splitting is served by `@langchain/textsplitters` (separate package, added as a dep in US-003). `langchain@^1.3.3` no longer re-exports `RecursiveCharacterTextSplitter` from `langchain/text_splitter`. Import from `"@langchain/textsplitters"` everywhere.
+- Ingestion script pattern: keep a pure `runIngestion(deps)` function (deps object with `{ prisma, embedder, splitter, listMarkdownFiles, readFile }`) + a thin CLI wrapper that constructs real `OpenAIEmbeddings` / `RecursiveCharacterTextSplitter` / prisma singleton. Makes the hash-skip / insert / update / delete logic trivial to unit-test with mocked deps, and mirrors how US-004+ retriever/chain services should be structured.
+- Vector literals for pgvector go in as a string of the form `"[v1,v2,...]"` passed to `$executeRawUnsafe` with `$N::vector` cast — never interpolate the array directly into the SQL string.
 
 ---
 
@@ -41,4 +44,26 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
   - The Supabase `DATABASE_URL` in `.env` is production — always override to local via inline `DATABASE_URL=... DIRECT_URL=...` when running migration commands.
   - `prisma migrate diff` emits a redundant `CREATE EXTENSION IF NOT EXISTS "vector";` at the top of cross-migration diffs; safe to drop from the final migration file since the init migration already creates it.
   - The existing `prisma/seed.ts` / `prisma/generators.ts` path inserts knowledge docs via `$executeRawUnsafe` without the new NOT NULL columns — the seed will break at runtime until US-003 updates it (or supplies dummy values). No typecheck impact because the path uses raw SQL, not the typed Prisma client.
+---
+
+## 2026-04-21 - US-003
+- Implemented `src/scripts/ingestKnowledge.ts`:
+  - Walks `documentation/` recursively, collects all `.md` files (sorted, deterministic order).
+  - Splits each file with `RecursiveCharacterTextSplitter` from `@langchain/textsplitters` (new dep) using `CHUNK_SIZE` / `CHUNK_OVERLAP` from `src/config/rag.ts`.
+  - Computes `sha256(content)` per chunk as `content_hash`.
+  - Upserts by `(source_path, chunk_index)`: insert if missing, skip if hash matches, update if hash differs. Deletes rows whose `(source_path, chunk_index)` key no longer appears.
+  - Embeddings written via `$executeRawUnsafe` with `$N::vector` cast (vector literal `[v1,v2,...]`).
+  - Exports a pure `runIngestion(deps)` + `hashContent` / `listMarkdownFiles` / `buildChunksForFile` so the CLI wrapper at the bottom is thin and the core logic is unit-testable.
+  - Logs summary line `files=X inserted=Y updated=Z skipped=W deleted=V`.
+- Added npm script: `"ingest:knowledge": "ts-node src/scripts/ingestKnowledge.ts"`.
+- New unit test `tests/ingestKnowledge.test.ts` covers: hash-skip when DB already matches, insert-all when DB empty, update-on-hash-delta, delete-stale, and a mixed insert/update/skip/delete run — all with mocked embedder + mocked Prisma (only `$queryRawUnsafe` and `$executeRawUnsafe` surfaces used). 50 tests green (was 43).
+- Fixed pre-existing typecheck error in `src/scripts/seed-knowledge.ts` by pointing the import at `@langchain/textsplitters` (the old `langchain/text_splitter` path was removed in langchain v1). `npx tsc --noEmit` is now clean.
+- Files changed: `src/scripts/ingestKnowledge.ts` (new), `src/scripts/seed-knowledge.ts` (import fix), `tests/ingestKnowledge.test.ts` (new), `package.json` (dep + script), `package-lock.json`, `scripts/ralph/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - `langchain@^1.3.3` dropped the `langchain/text_splitter` module path. Text splitters live in the standalone `@langchain/textsplitters` package now — `RecursiveCharacterTextSplitter`, `MarkdownTextSplitter`, `CharacterTextSplitter`, etc. are all exported from its root.
+  - The OpenAIEmbeddings constructor in `@langchain/openai` v1 accepts `{ apiKey, model }` (old `openAIApiKey` / `modelName` are deprecated aliases but still work).
+  - For unit-testing ingestion/chain code, structure the module as a pure `runX(deps)` function with an explicit deps object instead of importing the singleton `prisma` + real LLM clients inside the logic. Then the CLI wrapper at module bottom builds the real deps and calls `runX`. Reuse this pattern for US-004 (retriever) and US-005 (chain).
+  - Vector-column writes via Prisma raw: pass the array as a string literal `"[v1,v2,...]"` and cast with `$N::vector` in the SQL. Do NOT use `$executeRaw` tagged-template with a `number[]` — it will not coerce correctly.
+  - When mocking `$queryRawUnsafe` in vitest, cast the `vi.fn` back to the Prisma method type (`as unknown as IngestDeps["prisma"]["$queryRawUnsafe"]`) so `strict: true` TS compilation passes despite the generic.
+  - The ingestion script is idempotent: second run on unchanged files yields `inserted=0 updated=0 skipped=N deleted=0` — verified by the `skips chunks whose contentHash matches` test. If US-008's eval script ever wants a "fresh" ingestion, have it delete by `source_path` first rather than relying on re-runs doing something.
 ---

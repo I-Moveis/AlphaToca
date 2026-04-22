@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 
 const prisma = new PrismaClient();
 

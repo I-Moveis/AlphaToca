@@ -50,8 +50,8 @@
         "Typecheck passes; tests pass (npm test)"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Created src/scripts/ingestKnowledge.ts with pure `runIngestion(deps)` core + thin CLI wrapper, using RecursiveCharacterTextSplitter from @langchain/textsplitters (new dep) with CHUNK_SIZE/CHUNK_OVERLAP from src/config/rag.ts. sha256 content hash per chunk; upsert-by-(source_path, chunk_index) with skip-if-hash-matches; delete rows whose keys no longer exist. Embeddings written via $executeRawUnsafe with ::vector cast. Added `ingest:knowledge` npm script. Unit test (tests/ingestKnowledge.test.ts) covers insert-all, skip-on-match, update-on-hash-delta, delete-stale, and mixed paths with mocked embedder + mocked Prisma; 50 tests green. Also fixed pre-existing typecheck error in src/scripts/seed-knowledge.ts by pointing import at @langchain/textsplitters."
     },
     {
       "id": "US-004",
