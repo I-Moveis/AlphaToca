@@ -29,8 +29,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Added sourcePath, chunkIndex, contentHash, createdAt, updatedAt to KnowledgeDocument in prisma/schema.prisma with compound unique index on (sourcePath, chunkIndex) and index on contentHash. Migration 20260422022358_add_rag_ingestion_tracking generated via `prisma migrate diff` (non-interactive workaround for migrate dev) and applied cleanly to local DB via `prisma migrate deploy`. prisma generate and typecheck pass; 43 tests green."
     },
     {
       "id": "US-003",

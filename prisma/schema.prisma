@@ -164,12 +164,19 @@ model AiExtractedInsight {
 }
 
 model KnowledgeDocument {
-  id        String                       @id @default(uuid())
-  title     String
-  content   String                       @db.Text
+  id          String                       @id @default(uuid())
+  title       String
+  content     String                       @db.Text
   // Configuração do vetor de embeddings gerado pelo LangChain (ex: OpenAI usa 1536 dimensões)
-  embedding Unsupported("vector(1536)")?
+  embedding   Unsupported("vector(1536)")?
+  sourcePath  String                       @map("source_path")
+  chunkIndex  Int                          @map("chunk_index")
+  contentHash String                       @map("content_hash")
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
 
+  @@unique([sourcePath, chunkIndex], name: "knowledge_documents_source_chunk_key")
+  @@index([contentHash], name: "knowledge_documents_content_hash_idx")
   @@map("knowledge_documents")
 }
 
