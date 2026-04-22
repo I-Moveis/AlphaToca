@@ -31,6 +31,7 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
 - "Open RentalProcess for tenant" = `findFirst({ where: { tenantId, status: { not: "CLOSED" } }, orderBy: { createdAt: "desc" } })`. Only create a new TRIAGE process if this returns null — don't filter to just TRIAGE, since a tenant mid-VISIT_SCHEDULED should still have their insights attached to the same process, not a fresh TRIAGE one.
 - Worker-side fire-and-forget hook pattern: accept a `scheduleMicrotask?: (task: () => void) => void` in the deps object; default to the global `queueMicrotask`. Tests replace it with a queue they can drain manually (`scheduledMicrotasks.push; runScheduledMicrotasks()`). Avoid hooking via a real `queueMicrotask` in tests — timing races make assertions flaky.
 - When wiring a post-reply task like lead extraction, gate on `!ragError` so apologies don't feed garbage into the extractor. The handoff case (low score, valid user message) DOES still extract — only actual chain errors skip.
+- For one-shot CLI eval/smoke-test scripts (no unit tests), you can call `generateAnswer` with a synthetic sessionId like `eval-${Date.now()}-${rand}`. `prisma.message.findMany` with a non-existent sessionId returns `[]` — no need to create a throwaway ChatSession row. Don't forget `await prisma.$disconnect()` in `.finally()` or the node process hangs.
 
 ---
 
@@ -174,4 +175,23 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
   - Worker-side fire-and-forget: inject `scheduleMicrotask?: (task) => void` with a `queueMicrotask` default. In tests, replace it with a queue array that tests drain explicitly. Makes timing deterministic — `await handleWhatsappMessage(...); await deps.runScheduledMicrotasks();` works cleanly instead of relying on real-time microtask ordering.
   - Gate post-reply hooks on `!ragError`. The RAG-error apology path doesn't represent the user's real intent — extracting insights from that interaction just pollutes the lead record. The low-score handoff path (generic fallback, valid user message, `handoff: true`) IS still extractable — only actual chain exceptions skip.
   - For US-008 (eval script): it only needs `generateAnswer` + a throwaway sessionId. No need to set up the extraction hook or touch the worker path.
+---
+
+## 2026-04-21 - US-008
+- Implemented `src/scripts/evalRag.ts`:
+  - 8 hard-coded Portuguese test questions spanning the PRD-specified topics: triagem (screening), documentação (documents), agendar visita (schedule visit), pagamento (payment), pets, rescisão (contract termination), taxas/IPTU (fees/property tax), e cobrança inicial (upfront charges).
+  - For each question: calls `retrieveRelevantChunks(question)` to surface the top chunk's title + similarity score, then calls `generateAnswer({ sessionId, userMessage })` against a synthetic `sessionId = eval-${Date.now()}-${rand}`. Prisma `message.findMany` against a non-existent sessionId just returns `[]`, so no throwaway ChatSession row is needed.
+  - Prints `question / top chunk / similarity (retriever + chain) / handoff / answer (truncated to 500 chars with whitespace normalized)` per question.
+  - Retriever and chain calls are wrapped in try/catch per question so a single failure doesn't abort the run.
+  - `assertRagSecrets()` at `main()` entry so both `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are required before any LLM call.
+  - `prisma.$disconnect()` in the `.finally()` block, matching the CLI shutdown pattern from `ingestKnowledge.ts`.
+- Added npm script `"eval:rag": "ts-node src/scripts/evalRag.ts"`.
+- Files changed: `src/scripts/evalRag.ts` (new), `package.json` (script), `scripts/ralph/prd.json`, `scripts/ralph/progress.txt`.
+- Typecheck (`npx tsc --noEmit`) clean. `npm test` green at 92 tests across 11 files (no new tests — PRD only requires typecheck for US-008).
+- **Learnings for future iterations:**
+  - For eval/smoke scripts, skip the deps-injection + unit-test pattern — the script itself is the test. Direct imports of `generateAnswer` + `retrieveRelevantChunks` keep the script readable and the only thing that matters is that it runs.
+  - A synthetic `sessionId` avoids the need to set up a User + ChatSession per run. `prisma.message.findMany` doesn't error on a missing session, so the chain just builds a prompt with no history — exactly what you want for a cold-start eval.
+  - Output format: printing similarity from BOTH the standalone retriever AND the chain's `topScore` lets you verify they agree. They should be identical (the chain calls the retriever internally with the same query), but a divergence would flag a bug in either path.
+  - For future eval work: consider piping the output to a file + diffing across runs to detect regressions, or extending the script to compute mean similarity and handoff rate across the question set. Out of scope for US-008.
+  - This is the final story — all 8 user stories now pass.
 ---

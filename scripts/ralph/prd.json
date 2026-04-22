@@ -139,8 +139,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Created src/scripts/evalRag.ts with 8 hard-coded Portuguese test questions covering triagem, documentação, agendamento de visita, pagamento, pets, rescisão, taxas/IPTU, e cobrança inicial. For each question the script (a) calls retrieveRelevantChunks to get the top chunk's title + similarity score, (b) calls generateAnswer with a throwaway synthetic sessionId (eval-<timestamp>-<rand>) so no ChatSession/User row is needed — prisma.message.findMany against a non-existent sessionId returns [] cleanly, (c) prints question, top chunk title, similarity score (from both the retriever and the chain's topScore), handoff flag, and the truncated final answer. Retriever and chain errors are caught per-question so one bad row doesn't abort the whole run. assertRagSecrets() is called at main() entry to fail fast if OPENAI_API_KEY or ANTHROPIC_API_KEY is missing. prisma.$disconnect() is called in the finally block (same CLI shutdown pattern as ingestKnowledge.ts). Added npm script `eval:rag`: `ts-node src/scripts/evalRag.ts`. Typecheck clean; 92 tests still green (no new tests — PRD only requires typecheck for this story)."
     }
   ]
 }

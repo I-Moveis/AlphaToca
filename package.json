@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "ingest:knowledge": "ts-node src/scripts/ingestKnowledge.ts",
+    "eval:rag": "ts-node src/scripts/evalRag.ts",
     "conductor:sync": "echo 'Run automation script'"
   },
   "dependencies": {
