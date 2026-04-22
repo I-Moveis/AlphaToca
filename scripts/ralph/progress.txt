@@ -1,0 +1,25 @@
+# Ralph Progress Log
+Started: Tue Apr 21 11:19:46 PM -03 2026
+---
+
+## Codebase Patterns
+- Prisma client singleton lives in `src/config/db.ts` (reuse via `import prisma from "../config/db"`) — do NOT instantiate a second `PrismaClient`.
+- Tests use `vitest` (config at `vitest.config.ts`). Test files live in `tests/` at repo root, not colocated.
+- Pre-existing typecheck error in `src/scripts/seed-knowledge.ts` (missing `langchain/text_splitter` import path). Treat as known noise — only gate on typecheck delta for your changes, or fix it as part of US-003.
+- `KnowledgeDocument.embedding` is `Unsupported("vector(1536)")` in Prisma — writes/reads must use `$executeRawUnsafe` / `$queryRawUnsafe` with `::vector` casts. Never interpolate user input.
+- `langchain@^1.3.3` is the v1 API — use LCEL `RunnableSequence` / `ChatPromptTemplate`, NOT the deprecated `ConversationalRetrievalChain`.
+- Project uses `dotenv` for secrets; fail-fast on missing keys at boot rather than returning `undefined` deep in a call chain.
+
+---
+
+## 2026-04-21 - US-001
+- Implemented `src/config/rag.ts` with typed constants: `EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `RETRIEVER_K`, `SIMILARITY_THRESHOLD`.
+- Added `getOpenAIApiKey()`, `getAnthropicApiKey()`, and `assertRagSecrets()` — each throws with a clear message if the env var is missing/empty.
+- Files changed: `src/config/rag.ts` (new), `scripts/ralph/prd.json` (new), `scripts/ralph/progress.txt` (this file).
+- **Learnings for future iterations:**
+  - The repo already has `@langchain/openai`, `@langchain/anthropic`, `@langchain/core`, and `langchain` v1.3.3 installed — no need to add deps for US-003 through US-008.
+  - `src/config/` currently holds `db.ts` (Prisma singleton) and `swagger.ts`. Adding `rag.ts` there follows the existing pattern.
+  - Constants are exported as `as const` literal types so downstream consumers get narrow types (e.g., the exact embedding model string).
+  - Fail-fast secret accessors are functions (not module-level throws) so importing `src/config/rag.ts` in a test file does NOT require the env vars to be set. Call `assertRagSecrets()` at worker boot / script entry only.
+  - Full test suite (43 tests across 7 files) runs in ~3.4s via `npm test`.
+---
