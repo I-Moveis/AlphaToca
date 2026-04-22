@@ -85,8 +85,8 @@
         "Typecheck passes; tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Created src/services/ragChainService.ts exporting generateAnswer({ sessionId, userMessage }, overrideDeps?) -> { answer, handoff, topScore, usedChunkIds }. Loads the last N (default 10) messages for the session via prisma.message.findMany (orderBy timestamp desc + reverse -> ASC in final prompt). Calls retrieveRelevantChunks and gates on topScore >= SIMILARITY_THRESHOLD: if below (or zero chunks) returns Portuguese fallback + handoff=true WITHOUT calling the LLM. Builds a Portuguese system prompt encoding tone rules from documentation/buisness_plan.md §6 (profissional/acolhedor/confiável, base-apenas-no-contexto, handoff em litígios, PT-BR, breve). Calls ChatAnthropic with model claude-sonnet-4-6 and temperature 0.2. Deps-injection + cached-default-deps pattern (matches retriever service) so tests don't need ANTHROPIC_API_KEY. Handles string- and content-block-array LLM responses. Unit tests (tests/ragChainService.test.ts) cover: low-score handoff path, high-score LLM path, chat history inclusion + ASC ordering, historyLimit (take+desc+reverse), context injection in system prompt, content-block parsing, similarityThreshold override, formatContext/buildSystemPrompt/historyToMessages helpers. 70 tests green (was 57); typecheck clean."
     },
     {
       "id": "US-006",

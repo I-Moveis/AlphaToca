@@ -20,6 +20,9 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
 - Retrieval uses `$queryRawUnsafe` with the cosine-distance operator `embedding <=> $1::vector`. Compute similarity as `1 - distance` (pgvector returns distance, NOT similarity). `score >= SIMILARITY_THRESHOLD` is the gate for "trust the LLM answer" vs. "hand off to a human".
 - Services that need LLM/embedding clients should cache the constructed client in a module-level `let defaultDepsCache = null` + `getDefaultDeps()` helper. That way the module can be imported in tests without requiring `OPENAI_API_KEY`, but production callers still get a warm singleton.
 - Prisma raw returns of numeric columns (e.g. pgvector distance) can come back as JS `number` OR as `string` depending on the driver — always coerce with `typeof x === "string" ? parseFloat(x) : x` at the boundary.
+- To load the "last N" messages ordered ASC in a single call: use `orderBy: { timestamp: "desc" }, take: N` then `.slice().reverse()` in JS. `orderBy: asc, take: N` loads the FIRST N (oldest), not the most recent.
+- `@langchain/core` message classes (`HumanMessage`, `AIMessage`, `SystemMessage`) have a `.content` field that can be `string` OR an array of content blocks (e.g. `[{ type: "text", text: "..." }, ...]`) — always normalize LLM output through a helper that handles both shapes before returning user-facing strings.
+- Business-plan tone rules live in `documentation/buisness_plan.md` §6 — any chatbot-facing prompt should encode: profissional/acolhedor/confiável, base-apenas-no-contexto, handoff em litígios/exceções, PT-BR, respostas breves para WhatsApp.
 
 ---
 
@@ -93,4 +96,25 @@ Started: Tue Apr 21 11:19:46 PM -03 2026
   - Place the `WHERE embedding IS NOT NULL` filter BEFORE the `ORDER BY embedding <=> $1::vector` so the planner can skip null rows; also guards against ingestion-in-flight rows where embedding hasn't been written yet.
   - For US-005: the retriever returns chunks in descending-score order, so checking `chunks[0].score >= SIMILARITY_THRESHOLD` is sufficient for the handoff gate — no need to sort or max-scan.
   - US-005's chain service should follow the same deps-injection + cached-default pattern so its unit tests can mock both the retriever AND the Claude LLM without env vars.
+---
+
+## 2026-04-21 - US-005
+- Implemented `src/services/ragChainService.ts`:
+  - Exports `generateAnswer({ sessionId, userMessage }, overrideDeps?): Promise<{ answer, handoff, topScore, usedChunkIds }>`.
+  - Calls `retrieveRelevantChunks` (via injected `Retriever`) and gates: if `chunks.length === 0 || chunks[0].score < SIMILARITY_THRESHOLD`, returns the Portuguese fallback + `handoff: true` WITHOUT calling the LLM.
+  - Loads the last N (default 10) messages for the session via `prisma.message.findMany({ orderBy: { timestamp: "desc" }, take: 10 })` then `.reverse()` — yields ASC chronological order in the final prompt. Uses `select: { senderType, content }` to stay lean.
+  - Formats history: BOT -> `AIMessage`, TENANT/LANDLORD -> `HumanMessage`.
+  - Builds a Portuguese system prompt encoding §6 of `documentation/buisness_plan.md`: profissional/acolhedor/confiável, base-apenas-no-contexto, handoff em litígios/exceções, PT-BR, respostas breves. Retrieved chunks are concatenated into the system prompt with `[#N — title (score=X.XXX)]` headers via `formatContext`.
+  - Constructs `ChatAnthropic` with `model: "claude-sonnet-4-6"` and `temperature: 0.2`. Deps-injection + lazy `getDefaultDeps()` cache so the module imports cleanly in tests without `ANTHROPIC_API_KEY`.
+  - Handles both string- and content-block-array LLM responses via `extractTextContent` helper.
+- New unit test `tests/ragChainService.test.ts` (13 cases) covers: no-chunk handoff, low-score handoff, high-score LLM path, history inclusion + ASC ordering, history limit query shape (desc + take 10), context injected in system prompt, array-content-block LLM response parsing, per-call `similarityThreshold` override, plus `formatContext` / `buildSystemPrompt` / `historyToMessages` helpers. 70 tests green (was 57).
+- `npx tsc --noEmit` clean; `npm test` green.
+- Files changed: `src/services/ragChainService.ts` (new), `tests/ragChainService.test.ts` (new), `scripts/ralph/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - `@langchain/core/messages` exports `AIMessage`, `HumanMessage`, `SystemMessage` (and the `BaseMessage` type). Their `.content` field may be a plain string or an array of content blocks like `[{ type: "text", text: "..." }]` — always normalize via a helper. Array-shape responses are common from Anthropic when thinking/tool-use is involved, even when you don't ask for it.
+  - `ChatAnthropic` constructor takes `{ apiKey, model, temperature }`. Model IDs: `claude-sonnet-4-6` is the current Sonnet for this project (PRD spec). Do NOT default to `claude-sonnet-4-5-20250929` from the langchain docs examples.
+  - `prisma.message.findMany` with `orderBy: asc` + `take: N` gives the FIRST N messages (oldest), NOT the last N. To get "last N in ASC order" use `orderBy: desc` + `take: N` + `.slice().reverse()`. The acceptance criteria in US-005 specifically said "last 10 ordered ASC".
+  - When mocking a Prisma delegate (`prisma.message.findMany`) in vitest, narrow the `ChainDeps["prisma"]` type to `Pick<PrismaClient, "message">` and cast the test-only mock object via `as unknown as ChainDeps["prisma"]`. Full `PrismaClient` shape is too big to satisfy with a literal mock.
+  - For US-006 (wiring into worker): the chain already handles retrieval + LLM + prompt construction. The worker only needs to: persist inbound Message (TENANT), call `generateAnswer`, persist outbound Message (BOT), send via `whatsappService`, and if `handoff === true` flip `ChatSession.status` to `WAITING_HUMAN`. No need to touch retrieval, prompts, or history loading — it's all inside `generateAnswer`.
+  - For US-007 (lead extraction): reuse the same deps-injection pattern + `ChatAnthropic` setup, but with `temperature: 0` and LangChain structured output (`.withStructuredOutput(zodSchema)`). The structured-output call path is separate from `generateAnswer` — run it in a microtask/separate BullMQ job AFTER the reply is sent.
 ---
