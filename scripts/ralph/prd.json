@@ -125,8 +125,8 @@
         "Typecheck passes; tests pass"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Created src/services/leadExtractionService.ts exporting extractInsights({ sessionId, userMessage }, overrideDeps?) -> { insights, rentalProcessId, upsertedKeys, handoff }. Uses LangChain withStructuredOutput with a Zod InsightsSchema ({ budget?, neighborhood?, bedrooms?, pets_allowed?, intent }) against ChatAnthropic (claude-sonnet-4-6, temperature 0). Flow: look up ChatSession (error if missing) -> call structured LLM on a Portuguese system prompt + userMessage -> findFirst on open RentalProcess (status != CLOSED, orderBy createdAt desc); create TRIAGE one if none -> for each non-null insight field, findFirst AiExtractedInsight by (rentalProcessId, insightKey) + create or update (value-delta-aware: no update if unchanged) -> if intent === 'human_handoff' and session.status !== WAITING_HUMAN, flip session to WAITING_HUMAN. Deps-injection + cached-default-deps (lazy ChatAnthropic init) matches the pattern from retriever/chain services. Hooked into whatsappWorker.handleWhatsappMessage after the outbound reply + outbound Message.create via queueMicrotask (swappable via deps.scheduleMicrotask in tests). Skipped on RAG-error paths so the apology case doesn't produce misleading lead insights. Failures inside the microtask are caught + logged, never propagate. Updated whatsappWorker + tests to include extractInsights in the deps (WhatsappHandlerDeps). Tests: tests/leadExtractionService.test.ts (13 new cases: schema validation, prompt builder, value serializer, session-missing error, new-process creation + 5-field upsert, process reuse, null-field skip, second-call-updates, no-op on unchanged value, human_handoff flip, no-re-flip if already WAITING_HUMAN, user message forwarded to LLM). tests/whatsappWorker.test.ts extended with happy-path extraction-scheduled, extraction-failure-swallowed, and RAG-error-no-extraction cases. 92 tests green (was 75); typecheck clean."
     },
     {
       "id": "US-008",

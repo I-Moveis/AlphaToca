@@ -105,6 +105,9 @@ function makeInboundPayload(opts: InboundOpts = {}): WhatsAppWebhookPayload {
 function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandlerDeps & {
     generateAnswerMock: ReturnType<typeof vi.fn>;
     sendMessageMock: ReturnType<typeof vi.fn>;
+    extractInsightsMock: ReturnType<typeof vi.fn>;
+    scheduledMicrotasks: Array<() => void>;
+    runScheduledMicrotasks: () => Promise<void>;
     prismaMocks: {
         userUpsert: ReturnType<typeof vi.fn>;
         sessionFindFirst: ReturnType<typeof vi.fn>;
@@ -153,13 +156,36 @@ function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandler
         usedChunkIds: ['chunk-1'],
     });
 
+    const extractInsightsMock = vi.fn().mockResolvedValue({
+        insights: { intent: 'other' },
+        rentalProcessId: 'rp-1',
+        upsertedKeys: ['intent'],
+        handoff: false,
+    });
+
+    const scheduledMicrotasks: Array<() => void> = [];
+    const scheduleMicrotask = (task: () => void) => {
+        scheduledMicrotasks.push(task);
+    };
+    const runScheduledMicrotasks = async () => {
+        const tasks = scheduledMicrotasks.splice(0, scheduledMicrotasks.length);
+        for (const t of tasks) t();
+        // let any promises inside the tasks settle
+        await new Promise((r) => setImmediate(r));
+    };
+
     return {
         prisma: prismaMock,
         sendMessage: sendMessageMock,
         generateAnswer: generateAnswerMock,
+        extractInsights: extractInsightsMock,
+        scheduleMicrotask,
         ...overrides,
         generateAnswerMock,
         sendMessageMock,
+        extractInsightsMock,
+        scheduledMicrotasks,
+        runScheduledMicrotasks,
         prismaMocks: {
             userUpsert,
             sessionFindFirst,
@@ -337,6 +363,47 @@ describe('handleWhatsappMessage - happy path (grounded answer)', () => {
     });
 });
 
+describe('handleWhatsappMessage - lead extraction hook', () => {
+    it('schedules extractInsights after the outbound reply on the happy path', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+
+        await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        // Scheduled but not yet invoked — extraction runs in a microtask
+        expect(deps.extractInsightsMock).not.toHaveBeenCalled();
+        expect(deps.scheduledMicrotasks).toHaveLength(1);
+
+        await deps.runScheduledMicrotasks();
+        expect(deps.extractInsightsMock).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            userMessage: 'Olá, quero alugar',
+        });
+    });
+
+    it('does not let extractInsights failures throw out of the handler', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+        deps.extractInsightsMock.mockRejectedValueOnce(new Error('LLM structured output blew up'));
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+        expect(result).toEqual({ success: true, handoff: false, ragError: false });
+
+        await deps.runScheduledMicrotasks();
+        expect(deps.extractInsightsMock).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('handleWhatsappMessage - handoff path', () => {
     it('persists outbound fallback, sends it, and flips session to WAITING_HUMAN when handoff=true', async () => {
         const deps = makeDeps();
@@ -442,6 +509,21 @@ describe('handleWhatsappMessage - RAG errors', () => {
         });
         expect(result.ragError).toBe(true);
         expect(result.handoff).toBe(true);
+    });
+
+    it('does NOT schedule lead extraction when RAG chain errored', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+        deps.generateAnswerMock.mockRejectedValueOnce(new Error('LLM offline'));
+
+        await handleWhatsappMessage(makeInboundPayload(), deps);
+        expect(deps.scheduledMicrotasks).toHaveLength(0);
+        expect(deps.extractInsightsMock).not.toHaveBeenCalled();
     });
 
     it('still persists outbound and flips session even when sendMessage itself throws', async () => {

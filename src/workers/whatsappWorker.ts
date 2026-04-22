@@ -5,6 +5,7 @@ import { WhatsAppWebhookPayload } from '../types/whatsapp';
 import prisma from '../config/db';
 import { sendMessage as defaultSendMessage, SendMessageResponse } from '../services/whatsappService';
 import { generateAnswer as defaultGenerateAnswer, GenerateAnswerResult } from '../services/ragChainService';
+import { extractInsights as defaultExtractInsights, ExtractInsightsResult } from '../services/leadExtractionService';
 
 export const RAG_ERROR_FALLBACK =
     'Desculpe, tive um problema técnico para responder agora. Um de nossos atendentes humanos vai continuar esse atendimento em instantes.';
@@ -18,10 +19,17 @@ type GenerateAnswerFn = (input: {
     userMessage: string;
 }) => Promise<GenerateAnswerResult>;
 
+type ExtractInsightsFn = (input: {
+    sessionId: string;
+    userMessage: string;
+}) => Promise<ExtractInsightsResult>;
+
 export interface WhatsappHandlerDeps {
     prisma: PrismaWorkerClient;
     sendMessage: SendMessageFn;
     generateAnswer: GenerateAnswerFn;
+    extractInsights: ExtractInsightsFn;
+    scheduleMicrotask?: (task: () => void) => void;
 }
 
 export interface WhatsappHandlerResult {
@@ -141,6 +149,20 @@ export async function handleWhatsappMessage(
         });
     }
 
+    if (!ragError) {
+        const schedule = deps.scheduleMicrotask ?? queueMicrotask;
+        const sessionIdForExtraction = chatSession.id;
+        schedule(() => {
+            deps
+                .extractInsights({ sessionId: sessionIdForExtraction, userMessage: messageText })
+                .catch((err) => {
+                    console.error(
+                        `\x1b[31m[Worker]\x1b[0m Lead extraction falhou para sessão ${sessionIdForExtraction}: ${(err as Error).message}`,
+                    );
+                });
+        });
+    }
+
     console.log(`\x1b[32m[Worker]\x1b[0m Mensagem de ${phoneNumber} processada com sucesso!`);
     return { success: true, handoff, ragError };
 }
@@ -169,6 +191,7 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                 prisma,
                 sendMessage: defaultSendMessage,
                 generateAnswer: defaultGenerateAnswer,
+                extractInsights: defaultExtractInsights,
             });
         } catch (dbError: any) {
             if (dbError?.code === 'P2002' && dbError?.meta?.target?.includes('wamid')) {
