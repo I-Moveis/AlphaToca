@@ -106,8 +106,8 @@
         "Typecheck passes; tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed 2026-04-21. Refactored `src/services/whatsappService.ts` to only send to Meta (removed the baked-in outbound-message persistence + session lookup — the worker now owns all session/message state). Extracted the worker body into `handleWhatsappMessage(payload, deps)` in `src/workers/whatsappWorker.ts` with a deps-injection object `{ prisma, sendMessage, generateAnswer }` (same pattern as US-003/US-004/US-005). Handler flow: finds-or-creates `User` by phoneNumber; finds most recent `ChatSession` (any status) ordered by startedAt desc and creates a new ACTIVE_BOT session if none; persists inbound `Message` (TENANT); if session.status !== ACTIVE_BOT returns `{ success: true, reason: 'session_<status>' }` without replying; otherwise calls `generateAnswer({ sessionId, userMessage })`, sends via `whatsappService.sendMessage` (captures outbound wamid), persists outbound `Message` (BOT), and flips session to WAITING_HUMAN when `handoff === true`. RAG errors are caught and emit a Portuguese apology + handoff flip. `sendMessage` failures are logged but the outbound message is still persisted (wamid null) and the handoff/status update still runs. Tests in `tests/whatsappWorker.test.ts` rewritten to cover: empty payload/no-message/duplicate wamid, happy path (ACTIVE_BOT reuse + new session creation), handoff path, WAITING_HUMAN + RESOLVED early-return paths, RAG-error apology path, and sendMessage-failure persistence. Module top-level `new IORedis`/`new Worker` are mocked via `vi.mock('ioredis')` and `vi.mock('bullmq')` so the test file can import the worker module without a live Redis. 75 tests green (was 70); typecheck clean."
     },
     {
       "id": "US-007",

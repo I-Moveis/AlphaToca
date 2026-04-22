@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockAxiosPost = vi.hoisted(() => {
     process.env.TOKEN_ACCES_WHATSAPP = 'test-access-token';
     process.env.PHONE_NUMBER_ID = 'test-phone-id';
+    process.env.REDIS_URL = 'redis://localhost:6379';
     return vi.fn();
 });
 
@@ -12,40 +13,173 @@ vi.mock('axios', () => ({
     },
 }));
 
+vi.mock('ioredis', () => {
+    class FakeIORedis {
+        on() { return this; }
+        connect() { return Promise.resolve(); }
+        disconnect() { /* noop */ }
+        quit() { return Promise.resolve(); }
+    }
+    return { default: FakeIORedis };
+});
+
+vi.mock('bullmq', () => {
+    class FakeWorker {
+        constructor(_name: string, _handler: unknown, _opts: unknown) { /* noop */ }
+        on() { return this; }
+        close() { return Promise.resolve(); }
+    }
+    return { Worker: FakeWorker, Job: class {} };
+});
+
 vi.mock('../src/config/db', () => ({
     default: {
-        user: {
-            upsert: vi.fn().mockResolvedValue({ id: 'user-1', phoneNumber: '5511999998888', name: 'Test User' }),
-            findUnique: vi.fn().mockResolvedValue({ id: 'user-1' }),
-        },
+        user: { upsert: vi.fn() },
         chatSession: {
-            findFirst: vi.fn().mockResolvedValue(null),
-            create: vi.fn().mockResolvedValue({ id: 'session-1', tenantId: 'user-1', status: 'ACTIVE_BOT' }),
+            findFirst: vi.fn(),
+            create: vi.fn(),
+            update: vi.fn(),
         },
         message: {
-            create: vi.fn().mockResolvedValue({ id: 'msg-db-1' }),
-            findUnique: vi.fn().mockResolvedValue(null),
+            create: vi.fn(),
+            findUnique: vi.fn(),
         },
     },
 }));
 
 import { sendMessage } from '../src/services/whatsappService';
-import prisma from '../src/config/db';
+import {
+    handleWhatsappMessage,
+    RAG_ERROR_FALLBACK,
+    type WhatsappHandlerDeps,
+} from '../src/workers/whatsappWorker';
+import type { WhatsAppWebhookPayload } from '../src/types/whatsapp';
 
 beforeEach(() => {
     vi.clearAllMocks();
 });
 
+type InboundOpts = {
+    phoneNumber?: string;
+    messageText?: string;
+    wamid?: string;
+    contactName?: string;
+};
+
+function makeInboundPayload(opts: InboundOpts = {}): WhatsAppWebhookPayload {
+    const phoneNumber = opts.phoneNumber ?? '5511999998888';
+    const wamid = opts.wamid ?? 'wamid.INBOUND123';
+    return {
+        object: 'whatsapp_business_account',
+        entry: [
+            {
+                id: 'WHATSAPP_BUSINESS_ACCOUNT_ID',
+                changes: [
+                    {
+                        value: {
+                            messaging_product: 'whatsapp',
+                            contacts: [
+                                {
+                                    wa_id: phoneNumber,
+                                    profile: { name: opts.contactName ?? 'Maria' },
+                                },
+                            ],
+                            messages: [
+                                {
+                                    from: phoneNumber,
+                                    id: wamid,
+                                    timestamp: '1700000000',
+                                    type: 'text',
+                                    text: { body: opts.messageText ?? 'Olá, quero alugar' },
+                                },
+                            ],
+                        },
+                        field: 'messages',
+                    },
+                ],
+            },
+        ],
+    } as WhatsAppWebhookPayload;
+}
+
+function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandlerDeps & {
+    generateAnswerMock: ReturnType<typeof vi.fn>;
+    sendMessageMock: ReturnType<typeof vi.fn>;
+    prismaMocks: {
+        userUpsert: ReturnType<typeof vi.fn>;
+        sessionFindFirst: ReturnType<typeof vi.fn>;
+        sessionCreate: ReturnType<typeof vi.fn>;
+        sessionUpdate: ReturnType<typeof vi.fn>;
+        messageCreate: ReturnType<typeof vi.fn>;
+        messageFindUnique: ReturnType<typeof vi.fn>;
+    };
+} {
+    const userUpsert = vi.fn().mockResolvedValue({ id: 'user-1', phoneNumber: '5511999998888', name: 'Maria' });
+    const sessionFindFirst = vi.fn().mockResolvedValue(null);
+    const sessionCreate = vi.fn().mockResolvedValue({
+        id: 'session-1',
+        tenantId: 'user-1',
+        status: 'ACTIVE_BOT',
+        startedAt: new Date(),
+    });
+    const sessionUpdate = vi.fn().mockResolvedValue({
+        id: 'session-1',
+        status: 'WAITING_HUMAN',
+    });
+    const messageCreate = vi.fn().mockResolvedValue({ id: 'msg-1' });
+    const messageFindUnique = vi.fn().mockResolvedValue(null);
+
+    const prismaMock = {
+        user: { upsert: userUpsert },
+        chatSession: {
+            findFirst: sessionFindFirst,
+            create: sessionCreate,
+            update: sessionUpdate,
+        },
+        message: {
+            create: messageCreate,
+            findUnique: messageFindUnique,
+        },
+    } as unknown as WhatsappHandlerDeps['prisma'];
+
+    const sendMessageMock = vi.fn().mockResolvedValue({
+        messages: [{ id: 'wamid.OUTBOUND456' }],
+    });
+
+    const generateAnswerMock = vi.fn().mockResolvedValue({
+        answer: 'Resposta fundamentada em português.',
+        handoff: false,
+        topScore: 0.85,
+        usedChunkIds: ['chunk-1'],
+    });
+
+    return {
+        prisma: prismaMock,
+        sendMessage: sendMessageMock,
+        generateAnswer: generateAnswerMock,
+        ...overrides,
+        generateAnswerMock,
+        sendMessageMock,
+        prismaMocks: {
+            userUpsert,
+            sessionFindFirst,
+            sessionCreate,
+            sessionUpdate,
+            messageCreate,
+            messageFindUnique,
+        },
+    };
+}
+
 describe('whatsappService.sendMessage', () => {
-    it('should successfully send a message via Meta API and return response data', async () => {
+    it('sends a message via Meta API and returns response data', async () => {
         const mockResponse = {
             data: {
-                messages: [{ id: 'wamid-meta-123' }],
                 messaging_product: 'whatsapp',
                 contacts: [{ input: '5511999998888', wa_id: '5511999998888' }],
+                messages: [{ id: 'wamid-meta-123' }],
             },
         };
-
         mockAxiosPost.mockResolvedValue(mockResponse);
 
         const result = await sendMessage('5511999998888', 'Hello!');
@@ -63,125 +197,278 @@ describe('whatsappService.sendMessage', () => {
                     Authorization: 'Bearer test-access-token',
                     'Content-Type': 'application/json',
                 },
-            }
+            },
         );
         expect(result).toEqual(mockResponse.data);
     });
 
-    it('should throw when Meta API returns error code 130497 (restriction)', async () => {
+    it('propagates Meta API restriction (130497) errors', async () => {
         const metaError: any = new Error('Request failed with status code 403');
         metaError.response = {
             data: {
                 error: {
                     message: '(130497) Restrictions on the phone number do not allow sending messages.',
-                    type: 'OAuthException',
                     code: 130497,
                     error_subcode: 2615,
                 },
             },
         };
-
         mockAxiosPost.mockRejectedValue(metaError);
 
         await expect(sendMessage('5511999998888', 'Hello!')).rejects.toThrow();
         expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     });
 
-    it('should throw for other API errors (non-130497)', async () => {
+    it('propagates other API errors', async () => {
         const genericError: any = new Error('Request failed with status code 401');
         genericError.response = {
-            data: {
-                error: {
-                    message: 'Invalid access token',
-                    type: 'OAuthException',
-                    code: 190,
-                },
-            },
+            data: { error: { message: 'Invalid access token', code: 190 } },
         };
-
         mockAxiosPost.mockRejectedValue(genericError);
 
         await expect(sendMessage('5511999998888', 'Hello!')).rejects.toThrow();
-        expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     });
 
-    it('should throw on network error (no response)', async () => {
+    it('propagates network errors', async () => {
         const networkError = new Error('Network Error');
         mockAxiosPost.mockRejectedValue(networkError);
 
         await expect(sendMessage('5511999998888', 'Hello!')).rejects.toThrow('Network Error');
     });
+});
 
-    it('should persist message to database on successful send', async () => {
-        const mockResponse = {
-            data: {
-                messages: [{ id: 'wamid-meta-123' }],
-            },
-        };
+describe('handleWhatsappMessage - empty / malformed payloads', () => {
+    it('returns early when there are no changes', async () => {
+        const deps = makeDeps();
+        const result = await handleWhatsappMessage(
+            { object: 'x', entry: [] } as unknown as WhatsAppWebhookPayload,
+            deps,
+        );
+        expect(result).toEqual({ success: true, reason: 'ignored_empty_changes' });
+        expect(deps.sendMessageMock).not.toHaveBeenCalled();
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
+    });
 
-        mockAxiosPost.mockResolvedValue(mockResponse);
+    it('returns early when there is no message or contact', async () => {
+        const deps = makeDeps();
+        const payload = {
+            object: 'whatsapp_business_account',
+            entry: [{ id: 'x', changes: [{ value: { messaging_product: 'whatsapp' }, field: 'messages' }] }],
+        } as unknown as WhatsAppWebhookPayload;
+        const result = await handleWhatsappMessage(payload, deps);
+        expect(result).toEqual({ success: true, reason: 'ignored_not_message' });
+    });
 
-        await sendMessage('5511999998888', 'Hello!');
+    it('returns early on duplicate inbound wamid', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.messageFindUnique.mockResolvedValueOnce({ id: 'existing', wamid: 'wamid.INBOUND123' });
 
-        expect(prisma.message.create).toHaveBeenCalled();
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+        expect(result).toEqual({ success: true, reason: 'duplicate_wamid' });
+        expect(deps.prismaMocks.userUpsert).not.toHaveBeenCalled();
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
     });
 });
 
-describe('whatsappWorker duplicate handling', () => {
-    it('should detect duplicate wamid via database lookup', async () => {
-        (prisma.message.findUnique as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue({
-            id: 'existing-msg',
-            wamid: 'wamid-test-1',
+describe('handleWhatsappMessage - happy path (grounded answer)', () => {
+    it('upserts user, reuses ACTIVE_BOT session, persists inbound + outbound, sends answer, keeps session ACTIVE', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
         });
 
-        const existing = await prisma.message.findUnique({ where: { wamid: 'wamid-test-1' } });
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
 
-        expect(existing).toBeTruthy();
-        expect((existing as any).wamid).toBe('wamid-test-1');
-    });
-
-    it('should return null for new wamid', async () => {
-        (prisma.message.findUnique as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue(null);
-
-        const result = await prisma.message.findUnique({ where: { wamid: 'wamid-new-1' } });
-
-        expect(result).toBeNull();
-    });
-});
-
-describe('whatsappWorker error scenario: Meta API restriction (130497)', () => {
-    it('should propagate error when sendMessage encounters 130497, allowing BullMQ retry handling', async () => {
-        const restrictionError: any = new Error('Restriction error');
-        restrictionError.response = {
-            data: {
-                error: {
-                    message: '(130497) Restrictions on the phone number.',
-                    code: 130497,
-                    error_subcode: 2615,
-                },
-            },
-        };
-
-        mockAxiosPost.mockRejectedValue(restrictionError);
-
-        await expect(sendMessage('5511999998888', 'Test message')).rejects.toThrow();
-        expect(mockAxiosPost).toHaveBeenCalledTimes(1);
-    });
-
-    it('should still have created user/chatSession before send attempt failed', async () => {
-        (prisma.user.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
-            id: 'user-1',
-            phoneNumber: '5511999998888',
-            name: 'Test User',
-        });
-
-        const user = await prisma.user.upsert({
+        expect(deps.prismaMocks.userUpsert).toHaveBeenCalledWith({
             where: { phoneNumber: '5511999998888' },
-            update: { name: 'Test User' },
-            create: { phoneNumber: '5511999998888', name: 'Test User', role: 'TENANT' },
+            update: { name: 'Maria' },
+            create: { phoneNumber: '5511999998888', name: 'Maria', role: 'TENANT' },
+        });
+        expect(deps.prismaMocks.sessionCreate).not.toHaveBeenCalled();
+
+        const createCalls = deps.prismaMocks.messageCreate.mock.calls.map((c) => c[0].data);
+        expect(createCalls).toHaveLength(2);
+        expect(createCalls[0]).toMatchObject({
+            wamid: 'wamid.INBOUND123',
+            sessionId: 'session-1',
+            senderType: 'TENANT',
+            content: 'Olá, quero alugar',
+        });
+        expect(createCalls[1]).toMatchObject({
+            wamid: 'wamid.OUTBOUND456',
+            sessionId: 'session-1',
+            senderType: 'BOT',
+            content: 'Resposta fundamentada em português.',
         });
 
-        expect(user.phoneNumber).toBe('5511999998888');
-        expect(prisma.user.upsert).toHaveBeenCalled();
+        expect(deps.generateAnswerMock).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            userMessage: 'Olá, quero alugar',
+        });
+        expect(deps.sendMessageMock).toHaveBeenCalledWith(
+            '5511999998888',
+            'Resposta fundamentada em português.',
+        );
+        expect(deps.prismaMocks.sessionUpdate).not.toHaveBeenCalled();
+        expect(result).toEqual({ success: true, handoff: false, ragError: false });
+    });
+
+    it('creates a new ACTIVE_BOT session when none exists', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce(null);
+        deps.prismaMocks.sessionCreate.mockResolvedValueOnce({
+            id: 'session-new',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+
+        await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.prismaMocks.sessionCreate).toHaveBeenCalledWith({
+            data: { tenantId: 'user-1', status: 'ACTIVE_BOT' },
+        });
+        expect(deps.generateAnswerMock).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: 'session-new' }),
+        );
+    });
+});
+
+describe('handleWhatsappMessage - handoff path', () => {
+    it('persists outbound fallback, sends it, and flips session to WAITING_HUMAN when handoff=true', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+        deps.generateAnswerMock.mockResolvedValueOnce({
+            answer: 'Vou encaminhar para um atendente humano.',
+            handoff: true,
+            topScore: 0.3,
+            usedChunkIds: [],
+        });
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.sendMessageMock).toHaveBeenCalledWith(
+            '5511999998888',
+            'Vou encaminhar para um atendente humano.',
+        );
+        const createCalls = deps.prismaMocks.messageCreate.mock.calls.map((c) => c[0].data);
+        expect(createCalls[1]).toMatchObject({
+            senderType: 'BOT',
+            content: 'Vou encaminhar para um atendente humano.',
+        });
+        expect(deps.prismaMocks.sessionUpdate).toHaveBeenCalledWith({
+            where: { id: 'session-1' },
+            data: { status: 'WAITING_HUMAN' },
+        });
+        expect(result).toEqual({ success: true, handoff: true, ragError: false });
+    });
+});
+
+describe('handleWhatsappMessage - already WAITING_HUMAN / RESOLVED', () => {
+    it('persists inbound and returns early without invoking RAG or whatsappService', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-wh',
+            tenantId: 'user-1',
+            status: 'WAITING_HUMAN',
+            startedAt: new Date(),
+        });
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.prismaMocks.messageCreate).toHaveBeenCalledTimes(1);
+        const createData = deps.prismaMocks.messageCreate.mock.calls[0][0].data;
+        expect(createData).toMatchObject({
+            sessionId: 'session-wh',
+            senderType: 'TENANT',
+            content: 'Olá, quero alugar',
+        });
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
+        expect(deps.sendMessageMock).not.toHaveBeenCalled();
+        expect(deps.prismaMocks.sessionUpdate).not.toHaveBeenCalled();
+        expect(result).toEqual({ success: true, reason: 'session_waiting_human' });
+    });
+
+    it('persists inbound and returns early when session is RESOLVED', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-r',
+            tenantId: 'user-1',
+            status: 'RESOLVED',
+            startedAt: new Date(),
+        });
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.prismaMocks.messageCreate).toHaveBeenCalledTimes(1);
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
+        expect(result).toEqual({ success: true, reason: 'session_resolved' });
+    });
+});
+
+describe('handleWhatsappMessage - RAG errors', () => {
+    it('catches RAG chain errors, sends a Portuguese apology, and flips session to WAITING_HUMAN', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+        deps.generateAnswerMock.mockRejectedValueOnce(new Error('LLM offline'));
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.sendMessageMock).toHaveBeenCalledWith(
+            '5511999998888',
+            RAG_ERROR_FALLBACK,
+        );
+        const createCalls = deps.prismaMocks.messageCreate.mock.calls.map((c) => c[0].data);
+        expect(createCalls[1]).toMatchObject({
+            senderType: 'BOT',
+            content: RAG_ERROR_FALLBACK,
+        });
+        expect(deps.prismaMocks.sessionUpdate).toHaveBeenCalledWith({
+            where: { id: 'session-1' },
+            data: { status: 'WAITING_HUMAN' },
+        });
+        expect(result.ragError).toBe(true);
+        expect(result.handoff).toBe(true);
+    });
+
+    it('still persists outbound and flips session even when sendMessage itself throws', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-1',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+        });
+        deps.generateAnswerMock.mockResolvedValueOnce({
+            answer: 'Olá!',
+            handoff: true,
+            topScore: 0.2,
+            usedChunkIds: [],
+        });
+        deps.sendMessageMock.mockRejectedValueOnce(new Error('network'));
+
+        const result = await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        const createCalls = deps.prismaMocks.messageCreate.mock.calls.map((c) => c[0].data);
+        expect(createCalls[1]).toMatchObject({
+            wamid: null,
+            senderType: 'BOT',
+            content: 'Olá!',
+        });
+        expect(deps.prismaMocks.sessionUpdate).toHaveBeenCalled();
+        expect(result.handoff).toBe(true);
     });
 });
