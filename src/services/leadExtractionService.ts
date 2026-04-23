@@ -106,6 +106,8 @@ function getDefaultDeps(): ExtractionDeps {
     apiKey,
     model: CLAUDE_MODEL,
     temperature: 0,
+    timeout: 30000,
+    maxRetries: 2,
   });
   const structured = base.withStructuredOutput(InsightsSchema, {
     name: "extract_lead_insights",

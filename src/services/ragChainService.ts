@@ -121,6 +121,8 @@ function getDefaultDeps(): ChainDeps {
     apiKey,
     model: CLAUDE_MODEL,
     temperature: 0.2,
+    timeout: 30000,
+    maxRetries: 2,
   });
   defaultDepsCache = {
     prisma,

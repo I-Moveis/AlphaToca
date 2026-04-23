@@ -43,7 +43,7 @@ let defaultDepsCache: RetrieverDeps | null = null;
 function getDefaultDeps(): RetrieverDeps {
   if (defaultDepsCache) return defaultDepsCache;
   const apiKey = getOpenAIApiKey();
-  const embedder = new OpenAIEmbeddings({ apiKey, model: EMBEDDING_MODEL });
+  const embedder = new OpenAIEmbeddings({ apiKey, model: EMBEDDING_MODEL, timeout: 15000 });
   defaultDepsCache = {
     prisma,
     embedder: {

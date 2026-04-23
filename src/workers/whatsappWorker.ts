@@ -204,7 +204,7 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
             throw dbError;
         }
     },
-    { connection }
+    { connection, lockDuration: 60000 }
 );
 
 whatsappWorker.on('completed', (job: Job) => {
