@@ -40,7 +40,8 @@ export const receiveMessage = async (req: Request, res: Response, _next: NextFun
 
         if (payload.object === 'whatsapp_business_account') {
             await messageQueue.add('whatsapp-message', payload, {
-                attempts: 1,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 5000 },
                 removeOnComplete: true,
                 removeOnFail: 100,
             });

@@ -114,7 +114,8 @@ describe('receiveMessage', () => {
         expect(res.status).toHaveBeenCalledWith(200);
         expect(res.send).toHaveBeenCalledWith('EVENT_RECEIVED');
         expect(mockQueueAdd).toHaveBeenCalledWith('whatsapp-message', validPayload, {
-            attempts: 1,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5000 },
             removeOnComplete: true,
             removeOnFail: 100,
         });

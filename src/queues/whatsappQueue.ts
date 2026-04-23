@@ -11,6 +11,7 @@ const connection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: nu
 export const messageQueue = new Queue<WhatsAppWebhookPayload>('whatsapp-messages', {
     connection,
     defaultJobOptions: {
-        attempts: 1,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
     },
 });
