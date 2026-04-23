@@ -1,7 +1,17 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { verifyWebhook, receiveMessage } from '../controllers/webhookController';
 
 const router = Router();
+
+const webhookRateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'EVENT_RECEIVED',
+    skip: () => process.env.NODE_ENV === 'test',
+});
 
 /**
  * @swagger
@@ -54,6 +64,6 @@ router.get('/webhook', verifyWebhook);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/webhook', receiveMessage);
+router.post('/webhook', webhookRateLimiter, receiveMessage);
 
 export default router;

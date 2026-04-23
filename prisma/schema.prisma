@@ -110,11 +110,15 @@ model ChatSession {
   tenantId  String     @map("tenant_id")
   status    ChatStatus @default(ACTIVE_BOT)
   startedAt DateTime   @default(now()) @map("started_at")
+  // TTL da sessão. Após este instante, o worker cria uma nova sessão ACTIVE_BOT
+  // em vez de reutilizar esta (evita arrastar histórico obsoleto de semanas atrás).
+  expiresAt DateTime   @default(dbgenerated("(now() + interval '7 days')")) @map("expires_at")
 
   // Relacionamentos
   tenant   User      @relation("TenantChats", fields: [tenantId], references: [id])
   messages Message[]
 
+  @@index([expiresAt], name: "chat_sessions_expires_at_idx")
   @@map("chat_sessions")
 }
 
@@ -164,12 +168,20 @@ model AiExtractedInsight {
 }
 
 model KnowledgeDocument {
-  id        String                       @id @default(uuid())
-  title     String
-  content   String                       @db.Text
-  // Configuração do vetor de embeddings gerado pelo LangChain (ex: OpenAI usa 1536 dimensões)
-  embedding Unsupported("vector(1536)")?
+  id          String                       @id @default(uuid())
+  title       String
+  content     String                       @db.Text
+  // Configuração do vetor de embeddings gerado pelo LangChain (OpenAI text-embedding-3-small truncado).
+  // 512 dims retém ~98% da qualidade de recuperação vs 1536 (Matryoshka embeddings).
+  embedding   Unsupported("vector(512)")?
+  sourcePath  String                       @map("source_path")
+  chunkIndex  Int                          @map("chunk_index")
+  contentHash String                       @map("content_hash")
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
 
+  @@unique([sourcePath, chunkIndex], name: "knowledge_documents_source_chunk_key")
+  @@index([contentHash], name: "knowledge_documents_content_hash_idx")
   @@map("knowledge_documents")
 }
 
