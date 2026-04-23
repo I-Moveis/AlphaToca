@@ -49,6 +49,7 @@ vi.mock('../src/config/db', () => ({
 
 import { sendMessage } from '../src/services/whatsappService';
 import {
+    createConcurrencyLimiter,
     handleWhatsappMessage,
     RAG_ERROR_FALLBACK,
     type WhatsappHandlerDeps,
@@ -360,6 +361,62 @@ describe('handleWhatsappMessage - happy path (grounded answer)', () => {
         expect(deps.generateAnswerMock).toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: 'session-new' }),
         );
+    });
+});
+
+describe('createConcurrencyLimiter', () => {
+    it('runs tasks immediately while under the concurrency cap', async () => {
+        const limiter = createConcurrencyLimiter(3);
+        const results = await Promise.all([
+            limiter.run(async () => 1),
+            limiter.run(async () => 2),
+            limiter.run(async () => 3),
+        ]);
+        expect(results).toEqual([1, 2, 3]);
+    });
+
+    it('holds additional tasks until a slot frees up', async () => {
+        const limiter = createConcurrencyLimiter(2);
+        const timeline: string[] = [];
+        let releaseA: () => void = () => { };
+        let releaseB: () => void = () => { };
+
+        const a = limiter.run(async () => {
+            timeline.push('A:start');
+            await new Promise<void>((r) => { releaseA = r; });
+            timeline.push('A:end');
+        });
+        const b = limiter.run(async () => {
+            timeline.push('B:start');
+            await new Promise<void>((r) => { releaseB = r; });
+            timeline.push('B:end');
+        });
+        const c = limiter.run(async () => {
+            timeline.push('C:start');
+        });
+
+        // let scheduling settle
+        await new Promise((r) => setImmediate(r));
+        expect(timeline).toEqual(['A:start', 'B:start']); // C is queued
+
+        releaseA();
+        await a;
+        await c;
+        expect(timeline).toContain('A:end');
+        expect(timeline).toContain('C:start');
+
+        releaseB();
+        await b;
+    });
+
+    it('releases a slot even when the task throws', async () => {
+        const limiter = createConcurrencyLimiter(1);
+        await expect(
+            limiter.run(async () => { throw new Error('boom'); }),
+        ).rejects.toThrow('boom');
+
+        // Next call should proceed without deadlock.
+        await expect(limiter.run(async () => 'ok')).resolves.toBe('ok');
     });
 });
 

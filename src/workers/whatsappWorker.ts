@@ -10,6 +10,38 @@ import { extractInsights as defaultExtractInsights, ExtractInsightsResult } from
 export const RAG_ERROR_FALLBACK =
     'Desculpe, tive um problema técnico para responder agora. Um de nossos atendentes humanos vai continuar esse atendimento em instantes.';
 
+export const LEAD_EXTRACTION_CONCURRENCY = 3;
+
+export interface ConcurrencyLimiter {
+    run<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+export function createConcurrencyLimiter(max: number): ConcurrencyLimiter {
+    let active = 0;
+    const waiters: Array<() => void> = [];
+    return {
+        async run<T>(fn: () => Promise<T>): Promise<T> {
+            if (active >= max) {
+                await new Promise<void>((resolve) => waiters.push(resolve));
+            } else {
+                active++;
+            }
+            try {
+                return await fn();
+            } finally {
+                const next = waiters.shift();
+                if (next) {
+                    next();
+                } else {
+                    active--;
+                }
+            }
+        },
+    };
+}
+
+const defaultLeadExtractionLimiter = createConcurrencyLimiter(LEAD_EXTRACTION_CONCURRENCY);
+
 type PrismaWorkerClient = Pick<PrismaClient, 'user' | 'chatSession' | 'message'>;
 
 type SendMessageFn = (to: string, text: string) => Promise<SendMessageResponse>;
@@ -30,6 +62,7 @@ export interface WhatsappHandlerDeps {
     generateAnswer: GenerateAnswerFn;
     extractInsights: ExtractInsightsFn;
     scheduleMicrotask?: (task: () => void) => void;
+    leadExtractionLimiter?: ConcurrencyLimiter;
 }
 
 export interface WhatsappHandlerResult {
@@ -149,10 +182,16 @@ export async function handleWhatsappMessage(
 
     if (!ragError) {
         const schedule = deps.scheduleMicrotask ?? queueMicrotask;
+        const limiter = deps.leadExtractionLimiter ?? defaultLeadExtractionLimiter;
         const sessionIdForExtraction = chatSession.id;
         schedule(() => {
-            deps
-                .extractInsights({ sessionId: sessionIdForExtraction, userMessage: messageText })
+            limiter
+                .run(() =>
+                    deps.extractInsights({
+                        sessionId: sessionIdForExtraction,
+                        userMessage: messageText,
+                    }),
+                )
                 .catch((err) => {
                     console.error(
                         `\x1b[31m[Worker]\x1b[0m Lead extraction falhou para sessão ${sessionIdForExtraction}: ${(err as Error).message}`,
@@ -210,5 +249,11 @@ whatsappWorker.on('completed', (job: Job) => {
 });
 
 whatsappWorker.on('failed', (job: Job | undefined, err: Error) => {
-    console.error(`\x1b[31m[Worker ERRO]\x1b[0m O Job ${job?.id} falhou. Err: ${err.message}`);
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const maxAttempts = job?.opts?.attempts ?? 1;
+    const exhausted = attemptsMade >= maxAttempts;
+    const level = exhausted ? 'DEAD-LETTER' : 'RETRY';
+    console.error(
+        `\x1b[31m[Worker ERRO ${level}]\x1b[0m Job ${job?.id} falhou (tentativa ${attemptsMade}/${maxAttempts}): ${err.message}`,
+    );
 });
