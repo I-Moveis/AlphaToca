@@ -40,8 +40,10 @@ export interface TextChunker {
 
 export type PrismaIngestClient = Pick<
   PrismaClient,
-  "$queryRawUnsafe" | "$executeRawUnsafe"
+  "$queryRawUnsafe" | "$executeRawUnsafe" | "$transaction"
 >;
+
+export const EMBEDDING_BATCH_SIZE = 100;
 
 export interface IngestDeps {
   prisma: PrismaIngestClient;
@@ -165,10 +167,21 @@ export async function runIngestion(deps: IngestDeps): Promise<IngestSummary> {
     }
   }
 
-  const embeddings =
-    toEmbed.length === 0
-      ? []
-      : await deps.embedder.embedDocuments(toEmbed.map((c) => c.content));
+  const embeddings: number[][] = [];
+  if (toEmbed.length > 0) {
+    for (let start = 0; start < toEmbed.length; start += EMBEDDING_BATCH_SIZE) {
+      const batch = toEmbed.slice(start, start + EMBEDDING_BATCH_SIZE);
+      const vectors = await deps.embedder.embedDocuments(
+        batch.map((c) => c.content),
+      );
+      if (vectors.length !== batch.length) {
+        throw new Error(
+          `[ingest:knowledge] embedder returned ${vectors.length} vectors for ${batch.length} chunks in batch starting at ${start}`,
+        );
+      }
+      embeddings.push(...vectors);
+    }
+  }
 
   if (embeddings.length !== toEmbed.length) {
     throw new Error(
@@ -182,60 +195,63 @@ export async function runIngestion(deps: IngestDeps): Promise<IngestSummary> {
     embeddingByKey.set(`${chunk.sourcePath}|${chunk.chunkIndex}`, embeddings[i]);
   }
 
-  for (const action of actions) {
-    const chunk = action.chunk;
-    const key = `${chunk.sourcePath}|${chunk.chunkIndex}`;
-    const vector = embeddingByKey.get(key);
-    if (!vector) {
-      throw new Error(`[ingest:knowledge] missing embedding for ${key}`);
-    }
-    const vectorLiteral = toVectorLiteral(vector);
-
-    if (action.type === "insert") {
-      await deps.prisma.$executeRawUnsafe(
-        `INSERT INTO knowledge_documents
-           (id, title, content, embedding, source_path, chunk_index, content_hash, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3::vector, $4, $5, $6, now())`,
-        chunk.title,
-        chunk.content,
-        vectorLiteral,
-        chunk.sourcePath,
-        chunk.chunkIndex,
-        chunk.contentHash,
-      );
-      summary.inserted++;
-    } else {
-      await deps.prisma.$executeRawUnsafe(
-        `UPDATE knowledge_documents
-           SET title = $1,
-               content = $2,
-               embedding = $3::vector,
-               content_hash = $4,
-               updated_at = now()
-         WHERE id = $5`,
-        chunk.title,
-        chunk.content,
-        vectorLiteral,
-        chunk.contentHash,
-        action.existingId,
-      );
-      summary.updated++;
-    }
-  }
-
   const desiredKeys = new Set(
     allChunks.map((c) => `${c.sourcePath}|${c.chunkIndex}`),
   );
-  for (const row of existingRows) {
-    const key = `${row.source_path}|${row.chunk_index}`;
-    if (!desiredKeys.has(key)) {
-      await deps.prisma.$executeRawUnsafe(
+  const rowsToDelete = existingRows.filter(
+    (row) => !desiredKeys.has(`${row.source_path}|${row.chunk_index}`),
+  );
+
+  await deps.prisma.$transaction(async (tx) => {
+    for (const action of actions) {
+      const chunk = action.chunk;
+      const key = `${chunk.sourcePath}|${chunk.chunkIndex}`;
+      const vector = embeddingByKey.get(key);
+      if (!vector) {
+        throw new Error(`[ingest:knowledge] missing embedding for ${key}`);
+      }
+      const vectorLiteral = toVectorLiteral(vector);
+
+      if (action.type === "insert") {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO knowledge_documents
+             (id, title, content, embedding, source_path, chunk_index, content_hash, updated_at)
+           VALUES (gen_random_uuid(), $1, $2, $3::vector, $4, $5, $6, now())`,
+          chunk.title,
+          chunk.content,
+          vectorLiteral,
+          chunk.sourcePath,
+          chunk.chunkIndex,
+          chunk.contentHash,
+        );
+        summary.inserted++;
+      } else {
+        await tx.$executeRawUnsafe(
+          `UPDATE knowledge_documents
+             SET title = $1,
+                 content = $2,
+                 embedding = $3::vector,
+                 content_hash = $4,
+                 updated_at = now()
+           WHERE id = $5`,
+          chunk.title,
+          chunk.content,
+          vectorLiteral,
+          chunk.contentHash,
+          action.existingId,
+        );
+        summary.updated++;
+      }
+    }
+
+    for (const row of rowsToDelete) {
+      await tx.$executeRawUnsafe(
         `DELETE FROM knowledge_documents WHERE id = $1`,
         row.id,
       );
       summary.deleted++;
     }
-  }
+  });
 
   return summary;
 }
