@@ -19,6 +19,10 @@ ALTER TABLE "knowledge_documents"
   ALTER COLUMN "embedding" TYPE vector(512) USING NULL;
 
 -- 3. Recreate the HNSW index against the new column shape.
-CREATE INDEX CONCURRENTLY "idx_knowledge_documents_embedding_hnsw"
+-- NOTE: non-concurrent CREATE INDEX is safe here because step 2 just wiped
+-- every embedding to NULL, so there are zero tuples to index. Prisma also
+-- wraps multi-statement migrations in a transaction, and CONCURRENTLY is
+-- not allowed inside a transaction block.
+CREATE INDEX "idx_knowledge_documents_embedding_hnsw"
   ON "knowledge_documents" USING hnsw ("embedding" vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);
