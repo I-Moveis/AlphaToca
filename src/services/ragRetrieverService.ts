@@ -1,4 +1,9 @@
-import { OpenAIEmbeddings } from "@langchain/openai";
+// import { OpenAIEmbeddings } from "@langchain/openai";
+// ^ Import comentado. A equipe Selene Nyx deve escolher o provider de embeddings.
+//   Alternativas equivalentes (todas expõem `.embedQuery()` / `.embedDocuments()`):
+//     import { OpenAIEmbeddings } from "@langchain/openai";
+//     import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
+//     import { OllamaEmbeddings } from "@langchain/ollama";
 import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
@@ -43,17 +48,18 @@ let defaultDepsCache: RetrieverDeps | null = null;
 
 function getDefaultDeps(): RetrieverDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  const apiKey = getOpenAIApiKey();
-  const embedder = new OpenAIEmbeddings({
-    apiKey,
-    model: EMBEDDING_MODEL,
-    dimensions: EMBEDDING_DIMS,
-    timeout: 15000,
-  });
+  // const apiKey = getOpenAIApiKey();
+  // const embedder = new OpenAIEmbeddings({
+  //   apiKey,
+  //   model: EMBEDDING_MODEL,
+  //   dimensions: EMBEDDING_DIMS,
+  //   timeout: 15000,
+  // });
+  const embeddings = null as any; // TODO: Equipe Selene Nyx deve definir o modelo de Embeddings aqui
   defaultDepsCache = {
     prisma,
     embedder: {
-      embedQuery: (text) => embedder.embedQuery(text),
+      embedQuery: (text) => embeddings.embedQuery(text),
     },
   };
   return defaultDepsCache;

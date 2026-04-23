@@ -1,4 +1,9 @@
-import { ChatAnthropic } from "@langchain/anthropic";
+// import { ChatAnthropic } from "@langchain/anthropic";
+// ^ Import comentado. A equipe Selene Nyx deve escolher o provider do LLM.
+//   Qualquer ChatModel do LangChain que implemente `.withStructuredOutput()` serve:
+//     import { ChatOpenAI } from "@langchain/openai";
+//     import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+//     import { ChatOllama } from "@langchain/ollama";
 import {
   HumanMessage,
   SystemMessage,
@@ -101,15 +106,16 @@ let defaultDepsCache: ExtractionDeps | null = null;
 
 function getDefaultDeps(): ExtractionDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  const apiKey = getAnthropicApiKey();
-  const base = new ChatAnthropic({
-    apiKey,
-    model: CLAUDE_MODEL,
-    temperature: 0,
-    timeout: 30000,
-    maxRetries: 2,
-  });
-  const structured = base.withStructuredOutput(InsightsSchema, {
+  // const apiKey = getAnthropicApiKey();
+  // const base = new ChatAnthropic({
+  //   apiKey,
+  //   model: CLAUDE_MODEL,
+  //   temperature: 0,
+  //   timeout: 30000,
+  //   maxRetries: 2,
+  // });
+  const llm = null as any; // TODO: Equipe Selene Nyx deve definir o modelo LLM aqui (ex: ChatOpenAI, ChatGoogleGenerativeAI, ou ChatOllama)
+  const structured = llm.withStructuredOutput(InsightsSchema, {
     name: "extract_lead_insights",
   });
   defaultDepsCache = {

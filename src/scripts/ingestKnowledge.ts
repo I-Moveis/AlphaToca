@@ -3,7 +3,12 @@ import * as path from "path";
 import { createHash } from "crypto";
 
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { OpenAIEmbeddings } from "@langchain/openai";
+// import { OpenAIEmbeddings } from "@langchain/openai";
+// ^ Import comentado. A equipe Selene Nyx deve escolher o provider de embeddings.
+//   Alternativas equivalentes (todas expõem `.embedDocuments()`):
+//     import { OpenAIEmbeddings } from "@langchain/openai";
+//     import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
+//     import { OllamaEmbeddings } from "@langchain/ollama";
 import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
@@ -258,7 +263,7 @@ export async function runIngestion(deps: IngestDeps): Promise<IngestSummary> {
 }
 
 async function main(): Promise<void> {
-  const apiKey = getOpenAIApiKey();
+  // const apiKey = getOpenAIApiKey();
   const docsRoot = path.resolve(__dirname, "..", "..", "documentation");
 
   const splitter = new RecursiveCharacterTextSplitter({
@@ -266,16 +271,17 @@ async function main(): Promise<void> {
     chunkOverlap: CHUNK_OVERLAP,
   });
 
-  const embedder = new OpenAIEmbeddings({
-    apiKey,
-    model: EMBEDDING_MODEL,
-    dimensions: EMBEDDING_DIMS,
-  });
+  // const embedder = new OpenAIEmbeddings({
+  //   apiKey,
+  //   model: EMBEDDING_MODEL,
+  //   dimensions: EMBEDDING_DIMS,
+  // });
+  const embeddings = null as any; // TODO: Equipe Selene Nyx deve definir o modelo de Embeddings aqui
 
   const summary = await runIngestion({
     prisma,
     embedder: {
-      embedDocuments: (texts) => embedder.embedDocuments(texts),
+      embedDocuments: (texts) => embeddings.embedDocuments(texts),
     },
     splitter: {
       splitText: (text) => splitter.splitText(text),

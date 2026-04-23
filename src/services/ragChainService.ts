@@ -1,4 +1,9 @@
-import { ChatAnthropic } from "@langchain/anthropic";
+// import { ChatAnthropic } from "@langchain/anthropic";
+// ^ Import comentado. A equipe Selene Nyx deve escolher o provider do LLM.
+//   Alternativas equivalentes (todas implementam a mesma interface `invoke()`):
+//     import { ChatOpenAI } from "@langchain/openai";
+//     import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+//     import { ChatOllama } from "@langchain/ollama";
 import {
   AIMessage,
   HumanMessage,
@@ -124,14 +129,15 @@ let defaultDepsCache: ChainDeps | null = null;
 
 function getDefaultDeps(): ChainDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  const apiKey = getAnthropicApiKey();
-  const llm = new ChatAnthropic({
-    apiKey,
-    model: CLAUDE_MODEL,
-    temperature: 0.2,
-    timeout: 30000,
-    maxRetries: 2,
-  });
+  // const apiKey = getAnthropicApiKey();
+  // const llm = new ChatAnthropic({
+  //   apiKey,
+  //   model: CLAUDE_MODEL,
+  //   temperature: 0.2,
+  //   timeout: 30000,
+  //   maxRetries: 2,
+  // });
+  const llm = null as any; // TODO: Equipe Selene Nyx deve definir o modelo LLM aqui (ex: ChatOpenAI, ChatGoogleGenerativeAI, ou ChatOllama)
   defaultDepsCache = {
     prisma,
     retriever: {
