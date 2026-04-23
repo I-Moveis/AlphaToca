@@ -83,7 +83,12 @@ export async function handleWhatsappMessage(
         orderBy: { startedAt: 'desc' },
     });
 
-    if (!chatSession) {
+    if (!chatSession || chatSession.status !== 'ACTIVE_BOT') {
+        if (chatSession) {
+            console.log(
+                `\x1b[33m[Worker]\x1b[0m Sessão ${chatSession.id} com status ${chatSession.status}; criando nova sessão ACTIVE_BOT.`,
+            );
+        }
         chatSession = await deps.prisma.chatSession.create({
             data: { tenantId: user.id, status: 'ACTIVE_BOT' },
         });
@@ -97,13 +102,6 @@ export async function handleWhatsappMessage(
             content: messageText,
         },
     });
-
-    if (chatSession.status !== 'ACTIVE_BOT') {
-        console.log(
-            `\x1b[33m[Worker]\x1b[0m Sessão ${chatSession.id} com status ${chatSession.status}; inbound persistido sem resposta automática.`,
-        );
-        return { success: true, reason: `session_${chatSession.status.toLowerCase()}` };
-    }
 
     let answer: string;
     let handoff: boolean;
