@@ -110,11 +110,15 @@ model ChatSession {
   tenantId  String     @map("tenant_id")
   status    ChatStatus @default(ACTIVE_BOT)
   startedAt DateTime   @default(now()) @map("started_at")
+  // TTL da sessão. Após este instante, o worker cria uma nova sessão ACTIVE_BOT
+  // em vez de reutilizar esta (evita arrastar histórico obsoleto de semanas atrás).
+  expiresAt DateTime   @default(dbgenerated("(now() + interval '7 days')")) @map("expires_at")
 
   // Relacionamentos
   tenant   User      @relation("TenantChats", fields: [tenantId], references: [id])
   messages Message[]
 
+  @@index([expiresAt], name: "chat_sessions_expires_at_idx")
   @@map("chat_sessions")
 }
 

@@ -51,7 +51,9 @@ import { sendMessage } from '../src/services/whatsappService';
 import {
     createConcurrencyLimiter,
     handleWhatsappMessage,
+    isSessionExpired,
     RAG_ERROR_FALLBACK,
+    SESSION_TTL_MS,
     type WhatsappHandlerDeps,
 } from '../src/workers/whatsappWorker';
 import type { WhatsAppWebhookPayload } from '../src/types/whatsapp';
@@ -125,6 +127,7 @@ function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandler
         tenantId: 'user-1',
         status: 'ACTIVE_BOT',
         startedAt: new Date(),
+        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
     const sessionUpdate = vi.fn().mockResolvedValue({
         id: 'session-1',
@@ -356,7 +359,7 @@ describe('handleWhatsappMessage - happy path (grounded answer)', () => {
         await handleWhatsappMessage(makeInboundPayload(), deps);
 
         expect(deps.prismaMocks.sessionCreate).toHaveBeenCalledWith({
-            data: { tenantId: 'user-1', status: 'ACTIVE_BOT' },
+            data: expect.objectContaining({ tenantId: 'user-1', status: 'ACTIVE_BOT' }),
         });
         expect(deps.generateAnswerMock).toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: 'session-new' }),
@@ -496,6 +499,83 @@ describe('handleWhatsappMessage - handoff path', () => {
     });
 });
 
+describe('isSessionExpired', () => {
+    it('returns false for a null session', () => {
+        expect(isSessionExpired(null)).toBe(false);
+        expect(isSessionExpired(undefined)).toBe(false);
+    });
+
+    it('returns false when the session has no expiresAt set (legacy rows)', () => {
+        expect(isSessionExpired({ expiresAt: null })).toBe(false);
+        expect(isSessionExpired({})).toBe(false);
+    });
+
+    it('returns false for a session whose expiresAt is in the future', () => {
+        const future = new Date(Date.now() + 60_000);
+        expect(isSessionExpired({ expiresAt: future })).toBe(false);
+    });
+
+    it('returns true once expiresAt has passed', () => {
+        const past = new Date(Date.now() - 60_000);
+        expect(isSessionExpired({ expiresAt: past })).toBe(true);
+    });
+});
+
+describe('handleWhatsappMessage - session TTL', () => {
+    it('reuses an ACTIVE_BOT session that has not expired', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-live',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+            expiresAt: new Date(Date.now() + 60_000),
+        });
+
+        await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.prismaMocks.sessionCreate).not.toHaveBeenCalled();
+        expect(deps.generateAnswerMock).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: 'session-live' }),
+        );
+    });
+
+    it('creates a fresh ACTIVE_BOT session when the existing one has expired', async () => {
+        const deps = makeDeps();
+        deps.prismaMocks.sessionFindFirst.mockResolvedValueOnce({
+            id: 'session-stale',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+            expiresAt: new Date(Date.now() - 60_000),
+        });
+        deps.prismaMocks.sessionCreate.mockResolvedValueOnce({
+            id: 'session-fresh',
+            tenantId: 'user-1',
+            status: 'ACTIVE_BOT',
+            startedAt: new Date(),
+            expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+        });
+
+        await handleWhatsappMessage(makeInboundPayload(), deps);
+
+        expect(deps.prismaMocks.sessionCreate).toHaveBeenCalledTimes(1);
+        const createArg = deps.prismaMocks.sessionCreate.mock.calls[0][0].data;
+        expect(createArg.tenantId).toBe('user-1');
+        expect(createArg.status).toBe('ACTIVE_BOT');
+        expect(createArg.expiresAt).toBeInstanceOf(Date);
+
+        // expiresAt should be ~SESSION_TTL_MS in the future (allow 5s jitter)
+        const delta = createArg.expiresAt.getTime() - Date.now();
+        expect(delta).toBeGreaterThan(SESSION_TTL_MS - 5_000);
+        expect(delta).toBeLessThanOrEqual(SESSION_TTL_MS);
+
+        expect(deps.generateAnswerMock).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: 'session-fresh' }),
+        );
+    });
+});
+
 describe('handleWhatsappMessage - inactive session creates new ACTIVE_BOT session', () => {
     it('creates a new ACTIVE_BOT session when existing session is WAITING_HUMAN', async () => {
         const deps = makeDeps();
@@ -515,7 +595,7 @@ describe('handleWhatsappMessage - inactive session creates new ACTIVE_BOT sessio
         const result = await handleWhatsappMessage(makeInboundPayload(), deps);
 
         expect(deps.prismaMocks.sessionCreate).toHaveBeenCalledWith({
-            data: { tenantId: 'user-1', status: 'ACTIVE_BOT' },
+            data: expect.objectContaining({ tenantId: 'user-1', status: 'ACTIVE_BOT' }),
         });
         expect(deps.generateAnswerMock).toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: 'session-new' }),
@@ -542,7 +622,7 @@ describe('handleWhatsappMessage - inactive session creates new ACTIVE_BOT sessio
         const result = await handleWhatsappMessage(makeInboundPayload(), deps);
 
         expect(deps.prismaMocks.sessionCreate).toHaveBeenCalledWith({
-            data: { tenantId: 'user-1', status: 'ACTIVE_BOT' },
+            data: expect.objectContaining({ tenantId: 'user-1', status: 'ACTIVE_BOT' }),
         });
         expect(deps.generateAnswerMock).toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: 'session-new' }),

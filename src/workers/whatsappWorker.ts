@@ -12,6 +12,16 @@ export const RAG_ERROR_FALLBACK =
 
 export const LEAD_EXTRACTION_CONCURRENCY = 3;
 
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+
+export function isSessionExpired(
+    session: { expiresAt?: Date | null } | null | undefined,
+    now: Date = new Date(),
+): boolean {
+    if (!session || !session.expiresAt) return false;
+    return session.expiresAt.getTime() <= now.getTime();
+}
+
 export interface ConcurrencyLimiter {
     run<T>(fn: () => Promise<T>): Promise<T>;
 }
@@ -116,14 +126,22 @@ export async function handleWhatsappMessage(
         orderBy: { startedAt: 'desc' },
     });
 
-    if (!chatSession || chatSession.status !== 'ACTIVE_BOT') {
+    const expired = isSessionExpired(chatSession);
+    if (!chatSession || chatSession.status !== 'ACTIVE_BOT' || expired) {
         if (chatSession) {
+            const reason = expired
+                ? `expirada em ${chatSession.expiresAt?.toISOString?.() ?? 'data desconhecida'}`
+                : `status ${chatSession.status}`;
             console.log(
-                `\x1b[33m[Worker]\x1b[0m Sessão ${chatSession.id} com status ${chatSession.status}; criando nova sessão ACTIVE_BOT.`,
+                `\x1b[33m[Worker]\x1b[0m Sessão ${chatSession.id} (${reason}); criando nova sessão ACTIVE_BOT.`,
             );
         }
         chatSession = await deps.prisma.chatSession.create({
-            data: { tenantId: user.id, status: 'ACTIVE_BOT' },
+            data: {
+                tenantId: user.id,
+                status: 'ACTIVE_BOT',
+                expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+            },
         });
     }
 
