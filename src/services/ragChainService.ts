@@ -60,6 +60,10 @@ const SYSTEM_PROMPT = [
   "- Seja breve e direto: respostas curtas funcionam melhor no WhatsApp.",
   "- Se o contexto não cobrir a pergunta, diga isso com honestidade e ofereça o encaminhamento para um humano.",
   "",
+  "Papéis no histórico da conversa:",
+  "- Mensagens prefixadas com \"[Proprietário]\" vêm do locador do imóvel, não do inquilino. Trate-as como correções supervisórias (ex.: disponibilidade do imóvel, preço atualizado), não como perguntas do cliente atual. Se houver conflito entre uma resposta anterior sua e uma mensagem [Proprietário], priorize a informação do [Proprietário].",
+  "- Mensagens sem prefixo vêm do inquilino atual — são as que você está respondendo.",
+  "",
   "Contexto recuperado da base de conhecimento (use apenas isto para responder):",
   "{context}",
 ].join("\n");
@@ -83,11 +87,15 @@ interface StoredMessage {
   content: string;
 }
 
+export const LANDLORD_MESSAGE_PREFIX = "[Proprietário]";
+
 export function historyToMessages(history: StoredMessage[]): BaseMessage[] {
   const out: BaseMessage[] = [];
   for (const m of history) {
     if (m.senderType === "BOT") {
       out.push(new AIMessage(m.content));
+    } else if (m.senderType === "LANDLORD") {
+      out.push(new HumanMessage(`${LANDLORD_MESSAGE_PREFIX} ${m.content}`));
     } else {
       out.push(new HumanMessage(m.content));
     }

@@ -11,6 +11,7 @@ import {
   formatContext,
   buildSystemPrompt,
   historyToMessages,
+  LANDLORD_MESSAGE_PREFIX,
   type ChainDeps,
 } from "../src/services/ragChainService";
 import { SIMILARITY_THRESHOLD } from "../src/config/rag";
@@ -121,16 +122,34 @@ describe("buildSystemPrompt", () => {
 });
 
 describe("historyToMessages", () => {
-  it("maps BOT -> AIMessage and TENANT/LANDLORD -> HumanMessage", () => {
+  it("maps BOT -> AIMessage and TENANT -> HumanMessage (plain)", () => {
     const out = historyToMessages([
       { senderType: "TENANT", content: "oi" },
       { senderType: "BOT", content: "olá!" },
-      { senderType: "LANDLORD", content: "tudo bem?" },
     ]);
-    expect(out).toHaveLength(3);
+    expect(out).toHaveLength(2);
     expect(out[0]).toBeInstanceOf(HumanMessage);
+    expect((out[0] as HumanMessage).content).toBe("oi");
     expect(out[1]).toBeInstanceOf(AIMessage);
-    expect(out[2]).toBeInstanceOf(HumanMessage);
+    expect((out[1] as AIMessage).content).toBe("olá!");
+  });
+
+  it("prefixes LANDLORD messages so the LLM can tell them apart from the current tenant", () => {
+    const out = historyToMessages([
+      { senderType: "LANDLORD", content: "esse imóvel não está mais disponível" },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBeInstanceOf(HumanMessage);
+    const content = (out[0] as HumanMessage).content as string;
+    expect(content.startsWith(LANDLORD_MESSAGE_PREFIX)).toBe(true);
+    expect(content).toContain("esse imóvel não está mais disponível");
+  });
+
+  it("keeps TENANT content verbatim (no prefix leak)", () => {
+    const out = historyToMessages([
+      { senderType: "TENANT", content: "quero alugar um apê" },
+    ]);
+    expect((out[0] as HumanMessage).content).toBe("quero alugar um apê");
   });
 });
 
