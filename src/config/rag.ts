@@ -3,7 +3,7 @@ export const EMBEDDING_DIMS = 1536 as const;
 export const CHUNK_SIZE = 800 as const;
 export const CHUNK_OVERLAP = 120 as const;
 export const RETRIEVER_K = 4 as const;
-export const SIMILARITY_THRESHOLD = 0.72 as const;
+export const SIMILARITY_THRESHOLD = 0.78 as const;
 
 export type RagConfig = {
   EMBEDDING_MODEL: typeof EMBEDDING_MODEL;
