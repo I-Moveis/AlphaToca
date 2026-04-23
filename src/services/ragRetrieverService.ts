@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
 import {
+  EMBEDDING_DIMS,
   EMBEDDING_MODEL,
   RETRIEVER_K,
   getOpenAIApiKey,
@@ -43,7 +44,12 @@ let defaultDepsCache: RetrieverDeps | null = null;
 function getDefaultDeps(): RetrieverDeps {
   if (defaultDepsCache) return defaultDepsCache;
   const apiKey = getOpenAIApiKey();
-  const embedder = new OpenAIEmbeddings({ apiKey, model: EMBEDDING_MODEL, timeout: 15000 });
+  const embedder = new OpenAIEmbeddings({
+    apiKey,
+    model: EMBEDDING_MODEL,
+    dimensions: EMBEDDING_DIMS,
+    timeout: 15000,
+  });
   defaultDepsCache = {
     prisma,
     embedder: {

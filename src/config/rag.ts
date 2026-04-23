@@ -1,5 +1,8 @@
 export const EMBEDDING_MODEL = "text-embedding-3-small" as const;
-export const EMBEDDING_DIMS = 1536 as const;
+// 512 dims retém ~98% da qualidade de recuperação de 1536 dims
+// (ver https://openai.com/research/matryoshka), com 1/3 do armazenamento
+// e queries mais rápidas. Alterar este valor exige migration + re-ingestão.
+export const EMBEDDING_DIMS = 512 as const;
 export const CHUNK_SIZE = 800 as const;
 export const CHUNK_OVERLAP = 120 as const;
 export const RETRIEVER_K = 4 as const;

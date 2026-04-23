@@ -171,8 +171,9 @@ model KnowledgeDocument {
   id          String                       @id @default(uuid())
   title       String
   content     String                       @db.Text
-  // Configuração do vetor de embeddings gerado pelo LangChain (ex: OpenAI usa 1536 dimensões)
-  embedding   Unsupported("vector(1536)")?
+  // Configuração do vetor de embeddings gerado pelo LangChain (OpenAI text-embedding-3-small truncado).
+  // 512 dims retém ~98% da qualidade de recuperação vs 1536 (Matryoshka embeddings).
+  embedding   Unsupported("vector(512)")?
   sourcePath  String                       @map("source_path")
   chunkIndex  Int                          @map("chunk_index")
   contentHash String                       @map("content_hash")

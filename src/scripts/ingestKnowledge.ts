@@ -10,6 +10,7 @@ import prisma from "../config/db";
 import {
   CHUNK_OVERLAP,
   CHUNK_SIZE,
+  EMBEDDING_DIMS,
   EMBEDDING_MODEL,
   getOpenAIApiKey,
 } from "../config/rag";
@@ -268,6 +269,7 @@ async function main(): Promise<void> {
   const embedder = new OpenAIEmbeddings({
     apiKey,
     model: EMBEDDING_MODEL,
+    dimensions: EMBEDDING_DIMS,
   });
 
   const summary = await runIngestion({
