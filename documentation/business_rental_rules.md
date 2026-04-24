@@ -1,6 +1,6 @@
 # Base de Conhecimento - Regras de Locação e Administração Imobiliária
 
-**Metadados / Tags:** `[Inquilino, Proprietário, Locação, Taxas, Repasses, Vistorias, Multa, Rescisão, Garantias]`
+**Metadados / Tags:** `[Inquilino, Proprietário, Locação, Taxas, Repasses, Vistorias, Multa, Rescisão, Garantias, Documentação]`
 **Descrição:** Documento central contendo as diretrizes de propostas, financeiro, manutenção, encerramento de contrato e garantias da plataforma.
 
 ---
@@ -33,3 +33,28 @@
 *   **Proteção contra Inadimplência:** O sistema assegura o adiantamento dos recebimentos ao proprietário. Se o inquilino não pagar, a plataforma cobre e repassa no dia 12 os valores de aluguel, IPTU, taxa condominial ordinária e multa rescisória.
 *   **Proteção contra Danos:** A plataforma garante até R$ 50.000,00 de indenização por danos ao imóvel causados pelo inquilino ao fim do contrato que não sejam cobertos pelo Seguro Incêndio.
 *   **Seguro Incêndio:** A contratação de um Seguro Incêndio é obrigatória por lei e condição essencial para que a locação seja administrada pela plataforma.
+
+## 6. Documentação Necessária para Locação
+
+Esta seção detalha os documentos exigidos para a formalização do contrato, garantindo a segurança jurídica das partes em conformidade com a **Lei do Inquilinato (Lei nº 8.245/1991)** e as normas de fiscalização do **CRECI**.
+
+### 6.1 Pessoa Física (Inquilino e Cônjuge)
+*   **Identificação:** RG e CPF (ou CNH) originais. Em caso de união estável ou casamento, os documentos do cônjuge são obrigatórios.
+*   **Estado Civil:** Certidão de Nascimento ou Casamento (com averbação de divórcio/separação, se aplicável).
+*   **Comprovante de Residência:** Conta de consumo (luz, água ou gás) atualizada (últimos 60 dias).
+*   **Comprovação de Renda:** A renda líquida familiar deve ser, em regra, superior a 3 vezes o valor do pacote de locação.
+    *   **CLT:** 3 últimos holerites e cópia da Carteira de Trabalho.
+    *   **Autônomos/Liberais:** 3 últimos meses de extratos bancários (pessoa física) e/ou Declaração de IRPF com recibo de entrega.
+    *   **Aposentados/Pensionistas:** Extrato trimestral de pagamento do benefício (INSS).
+
+### 6.2 Pessoa Jurídica (Empresa Inquilina)
+*   **Jurídico:** Contrato Social consolidado ou Estatuto Social com todas as alterações registradas.
+*   **Fiscal:** Cartão CNPJ atualizado.
+*   **Sócios:** RG, CPF e comprovante de residência dos representantes legais/administradores que assinarão o contrato.
+*   **Saúde Financeira:** Último Balanço Patrimonial e Demonstração do Resultado do Exercício (DRE) assinados por contador habilitado (CRC).
+
+### 6.3 Documentação do Imóvel e Proprietário
+Para que o imóvel seja anunciado e administrado, o proprietário deve fornecer:
+*   **Matrícula do Imóvel:** Certidão de Inteiro Teor atualizada (validade de 30 dias) para verificação de propriedade e ônus.
+*   **IPTU:** Cópia do carnê do ano vigente para conferência da inscrição imobiliária.
+*   **Contas de Consumo:** Comprovantes de quitação de luz e água para possibilitar a transferência de titularidade no início da locação.
