@@ -261,6 +261,9 @@ async function main(): Promise<void> {
 
   const embedder = createGeminiEmbedder();
 
+  // Envolvemos o embedder para que a ingestão use `RETRIEVAL_DOCUMENT`
+  // (task type otimizado para RAG) e inclua o título de cada chunk,
+  // o que ajuda o retriever a dar mais peso ao tópico/arquivo de origem.
   const summary = await runIngestion({
     prisma,
     embedder: {

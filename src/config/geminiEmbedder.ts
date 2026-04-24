@@ -21,27 +21,57 @@ import {
  * obrigatório normalizar via L2 antes de indexar/consultar para que a
  * distância cosseno no pgvector produza scores comparáveis.
  */
+/**
+ * TaskTypes otimizam o vetor para o caso de uso. Para RAG:
+ * - `RETRIEVAL_DOCUMENT`: aplicado na INGESTÃO (cada chunk da KB).
+ * - `RETRIEVAL_QUERY`: aplicado na CONSULTA (pergunta do usuário).
+ *
+ * Documentos e queries devem sempre ser embedados com os task types
+ * correspondentes; misturar (ex.: ingerir sem taskType e consultar com
+ * RETRIEVAL_QUERY) produz similaridade degradada.
+ */
+export type EmbeddingTaskType =
+  | "RETRIEVAL_DOCUMENT"
+  | "RETRIEVAL_QUERY"
+  | "SEMANTIC_SIMILARITY"
+  | "CLASSIFICATION"
+  | "CLUSTERING"
+  | "QUESTION_ANSWERING"
+  | "FACT_VERIFICATION";
+
+export interface EmbedDocumentInput {
+  content: string;
+  title?: string; // apenas usado quando taskType = RETRIEVAL_DOCUMENT
+}
+
 export interface GeminiEmbedderAdapter {
   embedQuery(text: string): Promise<number[]>;
   embedDocuments(texts: string[]): Promise<number[][]>;
+  embedDocumentsWithTitles(docs: EmbedDocumentInput[]): Promise<number[][]>;
 }
 
 export function createGeminiEmbedder(): GeminiEmbedderAdapter {
   const apiKey = getGoogleApiKey();
   const client = new GoogleGenAI({ apiKey });
 
-  async function embedOne(text: string): Promise<number[]> {
+  async function embedOne(
+    text: string,
+    taskType: EmbeddingTaskType,
+    title?: string,
+  ): Promise<number[]> {
     const res = await client.models.embedContent({
       model: EMBEDDING_MODEL,
       contents: text,
       config: {
         outputDimensionality: EMBEDDING_DIMS,
+        taskType,
+        ...(taskType === "RETRIEVAL_DOCUMENT" && title ? { title } : {}),
       },
     });
     const values = res.embeddings?.[0]?.values;
     if (!values || values.length === 0) {
       throw new Error(
-        `[geminiEmbedder] empty embedding for input (model=${EMBEDDING_MODEL}, dims=${EMBEDDING_DIMS})`,
+        `[geminiEmbedder] empty embedding for input (model=${EMBEDDING_MODEL}, dims=${EMBEDDING_DIMS}, task=${taskType})`,
       );
     }
     if (values.length !== EMBEDDING_DIMS) {
@@ -52,20 +82,27 @@ export function createGeminiEmbedder(): GeminiEmbedderAdapter {
     return l2Normalize(values);
   }
 
-  async function embedBatch(texts: string[]): Promise<number[][]> {
-    // `embedContent` do SDK novo aceita `contents: string[]`, mas na prática
-    // alguns modelos (incluindo `gemini-embedding-001`) rejeitam arrays e
-    // exigem 1 chamada por input. Para manter o comportamento consistente em
-    // qualquer tamanho de base de conhecimento, serializamos.
+  async function embedDocumentsBatch(texts: string[]): Promise<number[][]> {
     const out: number[][] = new Array(texts.length);
     for (let i = 0; i < texts.length; i++) {
-      out[i] = await embedOne(texts[i]);
+      out[i] = await embedOne(texts[i], "RETRIEVAL_DOCUMENT");
+    }
+    return out;
+  }
+
+  async function embedDocumentsWithTitlesBatch(
+    docs: EmbedDocumentInput[],
+  ): Promise<number[][]> {
+    const out: number[][] = new Array(docs.length);
+    for (let i = 0; i < docs.length; i++) {
+      out[i] = await embedOne(docs[i].content, "RETRIEVAL_DOCUMENT", docs[i].title);
     }
     return out;
   }
 
   return {
-    embedQuery: embedOne,
-    embedDocuments: embedBatch,
+    embedQuery: (text) => embedOne(text, "RETRIEVAL_QUERY"),
+    embedDocuments: embedDocumentsBatch,
+    embedDocumentsWithTitles: embedDocumentsWithTitlesBatch,
   };
 }

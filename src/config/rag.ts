@@ -5,8 +5,15 @@ export const EMBEDDING_MODEL = "gemini-embedding-001" as const;
 export const EMBEDDING_DIMS = 1536 as const;
 export const CHUNK_SIZE = 800 as const;
 export const CHUNK_OVERLAP = 120 as const;
-export const RETRIEVER_K = 4 as const;
-const DEFAULT_SIMILARITY_THRESHOLD = 0.78;
+// RETRIEVER_K = 6: com task-aware embeddings (RETRIEVAL_DOCUMENT/QUERY)
+// conseguimos 6 chunks relevantes por pergunta sem diluir contexto.
+// Cabe tranquilamente nos 1M tokens do Gemini 2.5 Flash.
+export const RETRIEVER_K = 6 as const;
+// Threshold calibrado empiricamente para Gemini embeddings em PT-BR.
+// Sem task type: scores observados 0.52-0.64 (média 0.594).
+// Com task type (RETRIEVAL_DOCUMENT/QUERY): scores 0.62-0.78 (média 0.687).
+// 0.55 deixa margem segura acima do ruído e abaixo do menor relevante medido.
+const DEFAULT_SIMILARITY_THRESHOLD = 0.55;
 function resolveSimilarityThreshold(): number {
   const raw = process.env.EVAL_SIMILARITY_THRESHOLD;
   if (!raw || raw.trim() === "") return DEFAULT_SIMILARITY_THRESHOLD;
