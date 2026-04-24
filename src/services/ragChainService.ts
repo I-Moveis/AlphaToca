@@ -1,9 +1,4 @@
-// import { ChatAnthropic } from "@langchain/anthropic";
-// ^ Import comentado. A equipe Selene Nyx deve escolher o provider do LLM.
-//   Alternativas equivalentes (todas implementam a mesma interface `invoke()`):
-//     import { ChatOpenAI } from "@langchain/openai";
-//     import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-//     import { ChatOllama } from "@langchain/ollama";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   AIMessage,
   HumanMessage,
@@ -13,7 +8,7 @@ import {
 import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
-import { SIMILARITY_THRESHOLD, getAnthropicApiKey } from "../config/rag";
+import { CHAT_MODEL, SIMILARITY_THRESHOLD, getGoogleApiKey } from "../config/rag";
 import {
   retrieveRelevantChunks,
   type RetrievedChunk,
@@ -50,7 +45,6 @@ export interface ChainDeps {
 }
 
 const DEFAULT_HISTORY_LIMIT = 10;
-const CLAUDE_MODEL = "claude-sonnet-4-6" as const;
 const FALLBACK_ANSWER =
   "Obrigado pela sua mensagem! Para te dar a resposta mais precisa, vou transferir essa conversa para um dos nossos atendentes humanos. Em instantes alguém do nosso time falará com você por aqui.";
 
@@ -129,15 +123,13 @@ let defaultDepsCache: ChainDeps | null = null;
 
 function getDefaultDeps(): ChainDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  // const apiKey = getAnthropicApiKey();
-  // const llm = new ChatAnthropic({
-  //   apiKey,
-  //   model: CLAUDE_MODEL,
-  //   temperature: 0.2,
-  //   timeout: 30000,
-  //   maxRetries: 2,
-  // });
-  const llm = null as any; // TODO: Equipe Selene Nyx deve definir o modelo LLM aqui (ex: ChatOpenAI, ChatGoogleGenerativeAI, ou ChatOllama)
+  const apiKey = getGoogleApiKey();
+  const llm = new ChatGoogleGenerativeAI({
+    apiKey,
+    model: CHAT_MODEL,
+    temperature: 0.2,
+    maxRetries: 2,
+  });
   defaultDepsCache = {
     prisma,
     retriever: {

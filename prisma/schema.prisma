@@ -171,9 +171,10 @@ model KnowledgeDocument {
   id          String                       @id @default(uuid())
   title       String
   content     String                       @db.Text
-  // Configuração do vetor de embeddings gerado pelo LangChain (OpenAI text-embedding-3-small truncado).
-  // 512 dims retém ~98% da qualidade de recuperação vs 1536 (Matryoshka embeddings).
-  embedding   Unsupported("vector(512)")?
+  // Vetor de embeddings gerado pelo LangChain (Google gemini-embedding-001 @ 1536 dims).
+  // Gemini usa MRL; 1536 entrega a mesma pontuação de 3072 em benchmarks oficiais.
+  // Embeddings com dims < 3072 exigem normalização L2 no cliente antes de indexar.
+  embedding   Unsupported("vector(1536)")?
   sourcePath  String                       @map("source_path")
   chunkIndex  Int                          @map("chunk_index")
   contentHash String                       @map("content_hash")
