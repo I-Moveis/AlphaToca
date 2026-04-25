@@ -45,25 +45,102 @@ const router = Router();
  */
 router.post('/properties', propertyController.create);
 
+router.get('/properties', propertyController.list);
+
 /**
  * @swagger
- * /properties:
+ * /properties/search:
  *   get:
- *     summary: Listar todas as propriedades
+ *     summary: Busca avançada de propriedades com filtros e paginação
  *     tags: [Propriedades]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *       - in: query
+ *         name: minPrice
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: maxPrice
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: minBedrooms
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minBathrooms
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minParkingSpots
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minArea
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: maxArea
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: isFurnished
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: petsAllowed
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: nearSubway
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: orderBy
+ *         schema:
+ *           type: string
+ *           enum: [createdAt, views, priceAsc, priceDesc, isFeatured]
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
  *     responses:
  *       200:
- *         description: Lista de propriedades recuperada com sucesso
+ *         description: Resultados da busca
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Property'
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Property'
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     total:
+ *                       type: integer
+ *                     page:
+ *                       type: integer
+ *                     limit:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/properties', propertyController.list);
+router.get('/properties/search', propertyController.search);
 
 /**
  * @swagger
