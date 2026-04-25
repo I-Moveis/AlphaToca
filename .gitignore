@@ -34,6 +34,11 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 
+# Test coverage (artefatos gerados por npm run test:coverage)
+coverage/
+.nyc_output/
+*.lcov
+
 # AI Agents & Security Logs (Prevenção contra vazamento de conversas/chaves)
 .claude/
 .gemini_security/
