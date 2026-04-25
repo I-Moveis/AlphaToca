@@ -33,6 +33,15 @@ type FakeInsightRow = {
   insightValue: string;
 };
 
+type FakeVisitRow = {
+  id: string;
+  propertyId: string;
+  tenantId: string;
+  landlordId: string;
+  rentalProcessId: string | null;
+  status: "SCHEDULED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
+};
+
 interface DepsHarness {
   deps: ExtractionDeps;
   mocks: {
@@ -40,14 +49,17 @@ interface DepsHarness {
     sessionUpdate: ReturnType<typeof vi.fn>;
     processFindFirst: ReturnType<typeof vi.fn>;
     processCreate: ReturnType<typeof vi.fn>;
+    processUpdate: ReturnType<typeof vi.fn>;
     insightFindFirst: ReturnType<typeof vi.fn>;
     insightCreate: ReturnType<typeof vi.fn>;
     insightUpdate: ReturnType<typeof vi.fn>;
+    visitFindFirst: ReturnType<typeof vi.fn>;
     llmExtract: ReturnType<typeof vi.fn>;
   };
   state: {
     processes: FakeProcess[];
     insights: FakeInsightRow[];
+    visits: FakeVisitRow[];
   };
   lastExtractInput: BaseMessage[] | null;
 }
@@ -57,6 +69,7 @@ function makeDeps(opts: {
   insightsOut: ExtractedInsights;
   initialProcess?: FakeProcess | null;
   initialInsights?: FakeInsightRow[];
+  initialVisits?: FakeVisitRow[];
 }): DepsHarness {
   const sessionRow = opts.session ?? {
     id: "session-1",
@@ -66,6 +79,9 @@ function makeDeps(opts: {
   const processes: FakeProcess[] = opts.initialProcess ? [opts.initialProcess] : [];
   const insights: FakeInsightRow[] = opts.initialInsights
     ? opts.initialInsights.map((i) => ({ ...i }))
+    : [];
+  const visits: FakeVisitRow[] = opts.initialVisits
+    ? opts.initialVisits.map((v) => ({ ...v }))
     : [];
 
   const sessionFindUnique = vi.fn(async ({ where }: { where: { id: string } }) => {
@@ -104,7 +120,7 @@ function makeDeps(opts: {
         status: data.status,
       };
       processes.push(row);
-      return { id: row.id };
+      return { id: row.id, status: row.status };
     },
   );
 
@@ -154,6 +170,36 @@ function makeDeps(opts: {
     },
   );
 
+  const processUpdate = vi.fn(
+    async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { status: FakeProcess["status"] };
+    }) => {
+      const row = processes.find((p) => p.id === where.id);
+      if (row) row.status = data.status;
+      return row ?? null;
+    },
+  );
+
+  const visitFindFirst = vi.fn(
+    async ({
+      where,
+    }: {
+      where: { rentalProcessId?: string; status?: string };
+    }) => {
+      return (
+        visits.find(
+          (v) =>
+            (!where.rentalProcessId || v.rentalProcessId === where.rentalProcessId) &&
+            (!where.status || v.status === where.status),
+        ) ?? null
+      );
+    },
+  );
+
   const llmExtract = vi.fn(async () => opts.insightsOut);
 
   const harness: DepsHarness = {
@@ -166,11 +212,15 @@ function makeDeps(opts: {
         rentalProcess: {
           findFirst: processFindFirst,
           create: processCreate,
+          update: processUpdate,
         },
         aiExtractedInsight: {
           findFirst: insightFindFirst,
           create: insightCreate,
           update: insightUpdate,
+        },
+        visit: {
+          findFirst: visitFindFirst,
         },
       } as unknown as ExtractionDeps["prisma"],
       llm: {
@@ -185,12 +235,14 @@ function makeDeps(opts: {
       sessionUpdate,
       processFindFirst,
       processCreate,
+      processUpdate,
       insightFindFirst,
       insightCreate,
       insightUpdate,
+      visitFindFirst,
       llmExtract,
     },
-    state: { processes, insights },
+    state: { processes, insights, visits },
     lastExtractInput: null,
   };
 
@@ -281,7 +333,7 @@ describe("extractInsights", () => {
 
     expect(harness.mocks.processCreate).toHaveBeenCalledWith({
       data: { tenantId: "tenant-1", status: "TRIAGE" },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     expect(result.rentalProcessId).toBe("rp-1");
     expect(result.handoff).toBe(false);
@@ -458,5 +510,136 @@ describe("extractInsights", () => {
     expect((msgs![1] as HumanMessage).content).toBe(
       "preciso de um 2 quartos em moema",
     );
+  });
+
+  it("upserts preferred_visit_date and property_mentioned when present", async () => {
+    const harness = makeDeps({
+      insightsOut: {
+        preferred_visit_date: "amanhã às 10h",
+        property_mentioned: "Apartamento no Jardim das Flores",
+        intent: "schedule_visit",
+      } as unknown as ExtractedInsights,
+    });
+
+    const result = await extractInsights(
+      {
+        sessionId: "session-1",
+        userMessage: "quero visitar o Apartamento no Jardim das Flores amanhã às 10h",
+      },
+      harness.deps,
+    );
+
+    expect(result.upsertedKeys).toEqual(
+      expect.arrayContaining([
+        "preferred_visit_date",
+        "property_mentioned",
+        "intent",
+      ]),
+    );
+    const keys = harness.state.insights.map((r) => r.insightKey);
+    expect(keys).toContain("preferred_visit_date");
+    expect(keys).toContain("property_mentioned");
+  });
+
+  it("transitions RentalProcess to VISIT_SCHEDULED when intent=schedule_visit and a SCHEDULED Visit exists", async () => {
+    const harness = makeDeps({
+      insightsOut: { intent: "schedule_visit" },
+      initialProcess: {
+        id: "rp-1",
+        tenantId: "tenant-1",
+        status: "TRIAGE",
+      },
+      initialVisits: [
+        {
+          id: "v-1",
+          propertyId: "p-1",
+          tenantId: "tenant-1",
+          landlordId: "l-1",
+          rentalProcessId: "rp-1",
+          status: "SCHEDULED",
+        },
+      ],
+    });
+
+    await extractInsights(
+      { sessionId: "session-1", userMessage: "confirmando visita" },
+      harness.deps,
+    );
+
+    expect(harness.mocks.processUpdate).toHaveBeenCalledWith({
+      where: { id: "rp-1" },
+      data: { status: "VISIT_SCHEDULED" },
+    });
+    expect(harness.state.processes[0].status).toBe("VISIT_SCHEDULED");
+  });
+
+  it("does NOT transition to VISIT_SCHEDULED when no SCHEDULED Visit exists (even with intent=schedule_visit)", async () => {
+    const harness = makeDeps({
+      insightsOut: { intent: "schedule_visit" },
+      initialProcess: {
+        id: "rp-1",
+        tenantId: "tenant-1",
+        status: "TRIAGE",
+      },
+      initialVisits: [], // nenhuma visita ainda
+    });
+
+    await extractInsights(
+      { sessionId: "session-1", userMessage: "quero agendar" },
+      harness.deps,
+    );
+
+    expect(harness.mocks.processUpdate).not.toHaveBeenCalled();
+    expect(harness.state.processes[0].status).toBe("TRIAGE");
+  });
+
+  it("does NOT transition twice if RentalProcess is already VISIT_SCHEDULED", async () => {
+    const harness = makeDeps({
+      insightsOut: { intent: "schedule_visit" },
+      initialProcess: {
+        id: "rp-1",
+        tenantId: "tenant-1",
+        status: "VISIT_SCHEDULED",
+      },
+      initialVisits: [
+        {
+          id: "v-1",
+          propertyId: "p-1",
+          tenantId: "tenant-1",
+          landlordId: "l-1",
+          rentalProcessId: "rp-1",
+          status: "SCHEDULED",
+        },
+      ],
+    });
+
+    await extractInsights(
+      { sessionId: "session-1", userMessage: "ainda confirmado" },
+      harness.deps,
+    );
+
+    expect(harness.mocks.processUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("InsightsSchema with new visit fields", () => {
+  it("accepts preferred_visit_date and property_mentioned as optional strings", () => {
+    const parsed = InsightsSchema.parse({
+      preferred_visit_date: "sábado de manhã",
+      property_mentioned: "Apto Jardins",
+      intent: "schedule_visit",
+    });
+    expect(parsed.preferred_visit_date).toBe("sábado de manhã");
+    expect(parsed.property_mentioned).toBe("Apto Jardins");
+  });
+
+  it("accepts null for the new optional fields", () => {
+    const parsed = InsightsSchema.parse({
+      preferred_visit_date: null,
+      property_mentioned: null,
+      intent: "other",
+    });
+    expect(parsed.preferred_visit_date).toBeNull();
+    expect(parsed.property_mentioned).toBeNull();
   });
 });
