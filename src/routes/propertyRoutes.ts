@@ -28,6 +28,44 @@ const router = Router();
  *                 type: number
  *               address:
  *                 type: string
+ *                 minLength: 5
+ *                 example: Rua das Flores, 123, São Paulo - SP
+ *               type:
+ *                 type: string
+ *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *               bedrooms:
+ *                 type: integer
+ *                 example: 2
+ *               bathrooms:
+ *                 type: integer
+ *                 example: 1
+ *               parkingSpots:
+ *                 type: integer
+ *                 example: 1
+ *               area:
+ *                 type: number
+ *                 example: 65.5
+ *               isFurnished:
+ *                 type: boolean
+ *                 example: false
+ *               petsAllowed:
+ *                 type: boolean
+ *                 example: true
+ *               latitude:
+ *                 type: number
+ *                 example: -23.5489
+ *               longitude:
+ *                 type: number
+ *                 example: -46.6388
+ *               nearSubway:
+ *                 type: boolean
+ *                 example: false
+ *               isFeatured:
+ *                 type: boolean
+ *                 example: false
+ *               views:
+ *                 type: integer
+ *                 example: 150
  *               status:
  *                 type: string
  *                 enum: [AVAILABLE, IN_NEGOTIATION, RENTED]
@@ -103,7 +141,22 @@ router.get('/properties', propertyController.list);
  *         name: orderBy
  *         schema:
  *           type: string
- *           enum: [createdAt, views, priceAsc, priceDesc, isFeatured]
+ *           enum: [createdAt, views, priceAsc, priceDesc, isFeatured, nearest]
+ *       - in: query
+ *         name: lat
+ *         description: Latitude do usuário para busca por proximidade
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: lng
+ *         description: Longitude do usuário para busca por proximidade
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: radius
+ *         description: Raio de busca em quilômetros
+ *         schema:
+ *           type: number
  *       - in: query
  *         name: page
  *         schema:

@@ -28,7 +28,11 @@ export const propertySearchSchema = z.object({
   petsAllowed: stringToBoolean,
   nearSubway: stringToBoolean,
   isFeatured: stringToBoolean,
-  orderBy: z.enum(['createdAt', 'views', 'priceAsc', 'priceDesc', 'isFeatured']).optional().default('isFeatured'),
+
+  lat: stringToNumber,
+  lng: stringToNumber,
+  radius: stringToNumber,
+  orderBy: z.enum(['createdAt', 'views', 'priceAsc', 'priceDesc', 'isFeatured', 'nearest']).optional().default('isFeatured'),
   page: z.string().optional().default('1').transform((val) => Math.max(1, Number(val))),
   limit: z.string().optional().default('10').transform((val) => Math.min(100, Math.max(1, Number(val)))),
 });
