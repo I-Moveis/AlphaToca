@@ -5,6 +5,7 @@ import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
+import visitRoutes from './routes/visitRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 
 // Validate Auth0 configuration at startup
@@ -29,6 +30,9 @@ app.use('/api', authStack, propertyRoutes);
 
 // User Routes
 app.use('/api', authStack, userRoutes);
+
+// Visit (booking) Routes
+app.use('/api', authStack, visitRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);

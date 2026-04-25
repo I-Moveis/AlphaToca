@@ -3,22 +3,11 @@ import * as path from "path";
 import { createHash } from "crypto";
 
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-// import { OpenAIEmbeddings } from "@langchain/openai";
-// ^ Import comentado. A equipe Selene Nyx deve escolher o provider de embeddings.
-//   Alternativas equivalentes (todas expõem `.embedDocuments()`):
-//     import { OpenAIEmbeddings } from "@langchain/openai";
-//     import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
-//     import { OllamaEmbeddings } from "@langchain/ollama";
 import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
-import {
-  CHUNK_OVERLAP,
-  CHUNK_SIZE,
-  EMBEDDING_DIMS,
-  EMBEDDING_MODEL,
-  getOpenAIApiKey,
-} from "../config/rag";
+import { createGeminiEmbedder } from "../config/geminiEmbedder";
+import { CHUNK_OVERLAP, CHUNK_SIZE } from "../config/rag";
 
 export interface ChunkRecord {
   sourcePath: string;
@@ -263,7 +252,6 @@ export async function runIngestion(deps: IngestDeps): Promise<IngestSummary> {
 }
 
 async function main(): Promise<void> {
-  // const apiKey = getOpenAIApiKey();
   const docsRoot = path.resolve(__dirname, "..", "..", "documentation");
 
   const splitter = new RecursiveCharacterTextSplitter({
@@ -271,17 +259,15 @@ async function main(): Promise<void> {
     chunkOverlap: CHUNK_OVERLAP,
   });
 
-  // const embedder = new OpenAIEmbeddings({
-  //   apiKey,
-  //   model: EMBEDDING_MODEL,
-  //   dimensions: EMBEDDING_DIMS,
-  // });
-  const embeddings = null as any; // TODO: Equipe Selene Nyx deve definir o modelo de Embeddings aqui
+  const embedder = createGeminiEmbedder();
 
+  // Envolvemos o embedder para que a ingestão use `RETRIEVAL_DOCUMENT`
+  // (task type otimizado para RAG) e inclua o título de cada chunk,
+  // o que ajuda o retriever a dar mais peso ao tópico/arquivo de origem.
   const summary = await runIngestion({
     prisma,
     embedder: {
-      embedDocuments: (texts) => embeddings.embedDocuments(texts),
+      embedDocuments: (texts) => embedder.embedDocuments(texts),
     },
     splitter: {
       splitText: (text) => splitter.splitText(text),

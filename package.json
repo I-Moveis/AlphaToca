@@ -15,6 +15,7 @@
     "conductor:sync": "echo 'Run automation script'"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
     "@langchain/anthropic": "^1.3.26",
     "@langchain/core": "^1.1.40",
     "@langchain/google-genai": "^2.1.27",
