@@ -49,6 +49,13 @@ enum DocumentType {
   CONTRACT
 }
 
+enum VisitStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
 enum MessageStatus {
   failed
   sent
@@ -70,6 +77,8 @@ model User {
   properties      Property[]      @relation("LandlordProperties")
   chatSessions    ChatSession[]   @relation("TenantChats")
   rentalProcesses RentalProcess[] @relation("TenantProcesses")
+  visitsAsTenant   Visit[] @relation("TenantVisits")
+  visitsAsLandlord Visit[] @relation("LandlordVisits")
 
   @@map("users")
 }
@@ -87,6 +96,7 @@ model Property {
   landlord        User            @relation("LandlordProperties", fields: [landlordId], references: [id])
   rentalProcesses RentalProcess[]
   images          PropertyImage[]
+  visits          Visit[]
 
   @@map("properties")
 }
@@ -150,6 +160,7 @@ model RentalProcess {
   property  Property?            @relation(fields: [propertyId], references: [id])
   insights  AiExtractedInsight[]
   documents RentalDocument[]
+  visits    Visit[]
 
   @@map("rental_processes")
 }
@@ -196,4 +207,31 @@ model RentalDocument {
   rentalProcess RentalProcess @relation(fields: [rentalProcessId], references: [id])
 
   @@map("rental_documents")
+}
+
+model Visit {
+  id              String      @id @default(uuid())
+  propertyId      String      @map("property_id")
+  tenantId        String      @map("tenant_id")
+  // landlordId é denormalizado (copiado de Property.landlordId no momento da
+  // criação) para permitir detecção de conflito de agenda por locador em uma
+  // única query sem JOIN. Se o dono da Property mudar depois, visitas antigas
+  // mantêm o landlord original — isto é intencional (registro histórico).
+  landlordId      String      @map("landlord_id")
+  rentalProcessId String?     @map("rental_process_id")
+  scheduledAt     DateTime    @map("scheduled_at")
+  durationMinutes Int         @default(45) @map("duration_minutes")
+  status          VisitStatus @default(SCHEDULED)
+  notes           String?
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  property      Property       @relation(fields: [propertyId], references: [id])
+  tenant        User           @relation("TenantVisits", fields: [tenantId], references: [id])
+  landlord      User           @relation("LandlordVisits", fields: [landlordId], references: [id])
+  rentalProcess RentalProcess? @relation(fields: [rentalProcessId], references: [id])
+
+  @@index([propertyId, scheduledAt], name: "visits_property_time_idx")
+  @@index([landlordId, scheduledAt], name: "visits_landlord_time_idx")
+  @@map("visits")
 }
