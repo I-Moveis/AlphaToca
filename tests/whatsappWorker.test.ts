@@ -105,10 +105,20 @@ function makeInboundPayload(opts: InboundOpts = {}): WhatsAppWebhookPayload {
     } as WhatsAppWebhookPayload;
 }
 
-function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandlerDeps & {
+function makeDeps(overrides: Partial<WhatsappHandlerDeps> & {
+    initialSession?: {
+        id: string;
+        tenantId: string;
+        status: 'ACTIVE_BOT' | 'WAITING_HUMAN' | 'RESOLVED';
+        startedAt: Date;
+        expiresAt: Date;
+        pendingProposal?: unknown;
+    } | null;
+} = {}): WhatsappHandlerDeps & {
     generateAnswerMock: ReturnType<typeof vi.fn>;
     sendMessageMock: ReturnType<typeof vi.fn>;
     extractInsightsMock: ReturnType<typeof vi.fn>;
+    createVisitMock: ReturnType<typeof vi.fn>;
     scheduledMicrotasks: Array<() => void>;
     runScheduledMicrotasks: () => Promise<void>;
     prismaMocks: {
@@ -121,13 +131,16 @@ function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandler
     };
 } {
     const userUpsert = vi.fn().mockResolvedValue({ id: 'user-1', phoneNumber: '5511999998888', name: 'Maria' });
-    const sessionFindFirst = vi.fn().mockResolvedValue(null);
+    const sessionFindFirst = vi.fn().mockResolvedValue(
+        overrides.initialSession === undefined ? null : overrides.initialSession,
+    );
     const sessionCreate = vi.fn().mockResolvedValue({
         id: 'session-1',
         tenantId: 'user-1',
         status: 'ACTIVE_BOT',
         startedAt: new Date(),
         expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+        pendingProposal: null,
     });
     const sessionUpdate = vi.fn().mockResolvedValue({
         id: 'session-1',
@@ -167,6 +180,16 @@ function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandler
         handoff: false,
     });
 
+    const createVisitMock = vi.fn().mockResolvedValue({
+        id: 'visit-1',
+        propertyId: '11111111-1111-1111-1111-111111111111',
+        tenantId: 'user-1',
+        landlordId: 'landlord-1',
+        scheduledAt: new Date('2026-05-10T14:00:00Z'),
+        durationMinutes: 45,
+        status: 'SCHEDULED',
+    });
+
     const scheduledMicrotasks: Array<() => void> = [];
     const scheduleMicrotask = (task: () => void) => {
         scheduledMicrotasks.push(task);
@@ -178,16 +201,20 @@ function makeDeps(overrides: Partial<WhatsappHandlerDeps> = {}): WhatsappHandler
         await new Promise((r) => setImmediate(r));
     };
 
+    const { initialSession: _omit, ...handlerOverrides } = overrides;
+
     return {
         prisma: prismaMock,
         sendMessage: sendMessageMock,
         generateAnswer: generateAnswerMock,
         extractInsights: extractInsightsMock,
+        createVisit: createVisitMock,
         scheduleMicrotask,
-        ...overrides,
+        ...handlerOverrides,
         generateAnswerMock,
         sendMessageMock,
         extractInsightsMock,
+        createVisitMock,
         scheduledMicrotasks,
         runScheduledMicrotasks,
         prismaMocks: {
@@ -703,5 +730,147 @@ describe('handleWhatsappMessage - RAG errors', () => {
         });
         expect(deps.prismaMocks.sessionUpdate).toHaveBeenCalled();
         expect(result.handoff).toBe(true);
+    });
+});
+
+describe('handleWhatsappMessage — pending proposal confirmation flow', () => {
+    const validProposal = {
+        propertyId: '11111111-1111-1111-1111-111111111111',
+        scheduledAt: '2026-05-10T14:00:00Z',
+        expiresAt: Date.now() + 10 * 60 * 1000,
+    };
+
+    it('confirms proposal: creates Visit, sends confirmation, clears pendingProposal, skips RAG', async () => {
+        const deps = makeDeps({
+            initialSession: {
+                id: 'session-1',
+                tenantId: 'user-1',
+                status: 'ACTIVE_BOT',
+                startedAt: new Date(),
+                expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+                pendingProposal: validProposal,
+            },
+        });
+        deps.extractInsightsMock.mockResolvedValueOnce({
+            insights: { intent: 'schedule_visit' },
+            rentalProcessId: 'rp-1',
+            upsertedKeys: ['intent'],
+            handoff: false,
+        });
+
+        const result = await handleWhatsappMessage(
+            makeInboundPayload({ messageText: 'sim, pode agendar' }),
+            deps,
+        );
+
+        expect(deps.createVisitMock).toHaveBeenCalledTimes(1);
+        const createVisitArg = deps.createVisitMock.mock.calls[0][0];
+        expect(createVisitArg.propertyId).toBe(validProposal.propertyId);
+        expect(createVisitArg.tenantId).toBe('user-1');
+
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
+        expect(deps.sendMessageMock).toHaveBeenCalledTimes(1);
+
+        // pendingProposal foi limpa
+        const sessionUpdateCalls = deps.prismaMocks.sessionUpdate.mock.calls;
+        const clearProposalCall = sessionUpdateCalls.find(
+            (c) => c[0]?.data?.pendingProposal === null,
+        );
+        expect(clearProposalCall).toBeDefined();
+
+        expect(result.success).toBe(true);
+    });
+
+    it('DOES NOT create Visit when user message intent is not schedule_visit', async () => {
+        const deps = makeDeps({
+            initialSession: {
+                id: 'session-1',
+                tenantId: 'user-1',
+                status: 'ACTIVE_BOT',
+                startedAt: new Date(),
+                expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+                pendingProposal: validProposal,
+            },
+        });
+        deps.extractInsightsMock.mockResolvedValueOnce({
+            insights: { intent: 'search' },
+            rentalProcessId: 'rp-1',
+            upsertedKeys: ['intent'],
+            handoff: false,
+        });
+
+        await handleWhatsappMessage(
+            makeInboundPayload({ messageText: 'esquece, quero outro bairro' }),
+            deps,
+        );
+
+        expect(deps.createVisitMock).not.toHaveBeenCalled();
+        // Fluxo normal seguiu: RAG chamado
+        expect(deps.generateAnswerMock).toHaveBeenCalled();
+    });
+
+    it('DOES NOT create Visit when pendingProposal is expired', async () => {
+        const expiredProposal = {
+            ...validProposal,
+            expiresAt: Date.now() - 5000, // expirou 5s atrás
+        };
+        const deps = makeDeps({
+            initialSession: {
+                id: 'session-1',
+                tenantId: 'user-1',
+                status: 'ACTIVE_BOT',
+                startedAt: new Date(),
+                expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+                pendingProposal: expiredProposal,
+            },
+        });
+        deps.extractInsightsMock.mockResolvedValueOnce({
+            insights: { intent: 'schedule_visit' },
+            rentalProcessId: 'rp-1',
+            upsertedKeys: ['intent'],
+            handoff: false,
+        });
+
+        await handleWhatsappMessage(
+            makeInboundPayload({ messageText: 'sim' }),
+            deps,
+        );
+
+        expect(deps.createVisitMock).not.toHaveBeenCalled();
+        // Fluxo normal + limpa a proposta expirada
+        expect(deps.generateAnswerMock).toHaveBeenCalled();
+    });
+
+    it('does not block on createVisit CONFLICT — falls back to human handoff message', async () => {
+        const deps = makeDeps({
+            initialSession: {
+                id: 'session-1',
+                tenantId: 'user-1',
+                status: 'ACTIVE_BOT',
+                startedAt: new Date(),
+                expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+                pendingProposal: validProposal,
+            },
+        });
+        deps.extractInsightsMock.mockResolvedValueOnce({
+            insights: { intent: 'schedule_visit' },
+            rentalProcessId: 'rp-1',
+            upsertedKeys: ['intent'],
+            handoff: false,
+        });
+        deps.createVisitMock.mockRejectedValueOnce(
+            Object.assign(new Error('CONFLICT'), { code: 'CONFLICT', httpStatus: 409 }),
+        );
+
+        const result = await handleWhatsappMessage(
+            makeInboundPayload({ messageText: 'sim' }),
+            deps,
+        );
+
+        expect(deps.sendMessageMock).toHaveBeenCalledTimes(1);
+        const sentText = deps.sendMessageMock.mock.calls[0][1] as string;
+        // A mensagem deve sinalizar que o horário ficou indisponível
+        expect(sentText.toLowerCase()).toMatch(/não|indispon|tente|outro hor/);
+        expect(result.success).toBe(true);
     });
 });

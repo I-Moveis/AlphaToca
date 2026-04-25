@@ -1,14 +1,37 @@
 import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
-import type { ChatSession, PrismaClient } from '@prisma/client';
+import type { ChatSession, PrismaClient, Visit } from '@prisma/client';
 import { WhatsAppWebhookPayload } from '../types/whatsapp';
 import prisma from '../config/db';
 import { sendMessage as defaultSendMessage, SendMessageResponse } from '../services/whatsappService';
 import { generateAnswer as defaultGenerateAnswer, GenerateAnswerResult } from '../services/ragChainService';
 import { extractInsights as defaultExtractInsights, ExtractInsightsResult } from '../services/leadExtractionService';
+import { createVisit as defaultCreateVisit } from '../services/visitService';
+import type { CreateVisitInput } from '../utils/visitValidation';
 
 export const RAG_ERROR_FALLBACK =
     'Desculpe, tive um problema técnico para responder agora. Um de nossos atendentes humanos vai continuar esse atendimento em instantes.';
+
+export const VISIT_CONFLICT_FALLBACK =
+    'Opa, esse horário acabou de ficar indisponível. Me diga outro horário que eu te ajudo a remarcar.';
+
+export interface PendingProposal {
+    propertyId: string;
+    scheduledAt: string;
+    expiresAt: number;
+}
+
+export function isValidPendingProposal(
+    raw: unknown,
+    now: number = Date.now(),
+): raw is PendingProposal {
+    if (!raw || typeof raw !== 'object') return false;
+    const p = raw as Partial<PendingProposal>;
+    if (typeof p.propertyId !== 'string') return false;
+    if (typeof p.scheduledAt !== 'string') return false;
+    if (typeof p.expiresAt !== 'number') return false;
+    return p.expiresAt > now;
+}
 
 export const LEAD_EXTRACTION_CONCURRENCY = 3;
 
@@ -66,11 +89,14 @@ type ExtractInsightsFn = (input: {
     userMessage: string;
 }) => Promise<ExtractInsightsResult>;
 
+type CreateVisitFn = (input: CreateVisitInput) => Promise<Visit>;
+
 export interface WhatsappHandlerDeps {
     prisma: PrismaWorkerClient;
     sendMessage: SendMessageFn;
     generateAnswer: GenerateAnswerFn;
     extractInsights: ExtractInsightsFn;
+    createVisit?: CreateVisitFn;
     scheduleMicrotask?: (task: () => void) => void;
     leadExtractionLimiter?: ConcurrencyLimiter;
 }
@@ -154,6 +180,114 @@ export async function handleWhatsappMessage(
         },
     });
 
+    // --- Pending proposal confirmation flow ---
+    // Se há uma proposta de visita pendente, roda lead extraction ANTES do RAG
+    // para saber a intent. Se o usuário confirmou (schedule_visit) E a proposta
+    // ainda é válida, cria a Visit e pula o RAG. Caso contrário, apenas segue
+    // o fluxo normal (e limpa propostas expiradas).
+    const rawProposal = (chatSession as unknown as { pendingProposal?: unknown }).pendingProposal;
+    const proposalIsValid = isValidPendingProposal(rawProposal);
+    const proposalExists = rawProposal !== null && rawProposal !== undefined;
+
+    let insightsAlreadyExtracted = false;
+
+    if (proposalExists) {
+        let extracted: ExtractInsightsResult | null = null;
+        try {
+            extracted = await deps.extractInsights({
+                sessionId: chatSession.id,
+                userMessage: messageText,
+            });
+            insightsAlreadyExtracted = true;
+        } catch (err) {
+            console.error(
+                `\x1b[31m[Worker]\x1b[0m Falha em extractInsights (confirm path) para sessão ${chatSession.id}: ${(err as Error).message}`,
+            );
+        }
+
+        if (
+            proposalIsValid &&
+            extracted?.insights?.intent === 'schedule_visit' &&
+            deps.createVisit
+        ) {
+            const proposal = rawProposal as PendingProposal;
+            try {
+                const visit = await deps.createVisit({
+                    propertyId: proposal.propertyId,
+                    tenantId: user.id,
+                    rentalProcessId: extracted.rentalProcessId,
+                    scheduledAt: new Date(proposal.scheduledAt),
+                    durationMinutes: 45,
+                });
+                // Limpa a proposta após sucesso
+                await deps.prisma.chatSession.update({
+                    where: { id: chatSession.id },
+                    data: { pendingProposal: null } as unknown as Record<string, unknown>,
+                });
+
+                const confirmationMessage =
+                    `Pronto! Sua visita ficou confirmada para ${visit.scheduledAt.toLocaleString(
+                        'pt-BR',
+                        { dateStyle: 'full', timeStyle: 'short' },
+                    )}. Até lá!`;
+
+                let confirmWamid: string | null = null;
+                try {
+                    const response = await deps.sendMessage(phoneNumber, confirmationMessage);
+                    confirmWamid = response.messages?.[0]?.id ?? null;
+                } catch (sendError) {
+                    console.error(
+                        `\x1b[31m[Worker]\x1b[0m Falha ao enviar confirmação: ${(sendError as Error).message}`,
+                    );
+                }
+                await deps.prisma.message.create({
+                    data: {
+                        wamid: confirmWamid,
+                        sessionId: chatSession.id,
+                        senderType: 'BOT',
+                        content: confirmationMessage,
+                    },
+                });
+                return { success: true, reason: 'visit_confirmed' };
+            } catch (err) {
+                // CONFLICT ou outro erro → limpa a proposta e manda mensagem amigável
+                console.error(
+                    `\x1b[31m[Worker]\x1b[0m createVisit falhou na confirmação: ${(err as Error).message}`,
+                );
+                await deps.prisma.chatSession.update({
+                    where: { id: chatSession.id },
+                    data: { pendingProposal: null } as unknown as Record<string, unknown>,
+                });
+                let conflictWamid: string | null = null;
+                try {
+                    const response = await deps.sendMessage(phoneNumber, VISIT_CONFLICT_FALLBACK);
+                    conflictWamid = response.messages?.[0]?.id ?? null;
+                } catch (sendError) {
+                    console.error(
+                        `\x1b[31m[Worker]\x1b[0m Falha ao enviar fallback de conflito: ${(sendError as Error).message}`,
+                    );
+                }
+                await deps.prisma.message.create({
+                    data: {
+                        wamid: conflictWamid,
+                        sessionId: chatSession.id,
+                        senderType: 'BOT',
+                        content: VISIT_CONFLICT_FALLBACK,
+                    },
+                });
+                return { success: true, reason: 'visit_conflict' };
+            }
+        }
+
+        // Proposta existe mas usuário não confirmou OU expirou → descarta
+        if (!proposalIsValid || extracted?.insights?.intent !== 'schedule_visit') {
+            await deps.prisma.chatSession.update({
+                where: { id: chatSession.id },
+                data: { pendingProposal: null } as unknown as Record<string, unknown>,
+            });
+        }
+    }
+
     let answer: string;
     let handoff: boolean;
     let ragError = false;
@@ -198,7 +332,7 @@ export async function handleWhatsappMessage(
         });
     }
 
-    if (!ragError) {
+    if (!ragError && !insightsAlreadyExtracted) {
         const schedule = deps.scheduleMicrotask ?? queueMicrotask;
         const limiter = deps.leadExtractionLimiter ?? defaultLeadExtractionLimiter;
         const sessionIdForExtraction = chatSession.id;
@@ -247,6 +381,7 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                 sendMessage: defaultSendMessage,
                 generateAnswer: defaultGenerateAnswer,
                 extractInsights: defaultExtractInsights,
+                createVisit: defaultCreateVisit,
             });
         } catch (dbError: any) {
             if (dbError?.code === 'P2002' && dbError?.meta?.target?.includes('wamid')) {
