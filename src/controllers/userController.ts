@@ -9,7 +9,7 @@ export const userController = {
    */
   async getMe(req: Request, res: Response, next: NextFunction) {
     try {
-      const localUser = req.localUser;
+      const localUser = (req as any).localUser;
 
       if (!localUser) {
         return res.status(404).json({

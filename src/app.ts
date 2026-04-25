@@ -25,7 +25,7 @@ const authStack = [checkJwt, authSyncMiddleware];
 
 // Routes
 app.use('/api', webhookRoutes);
-app.use('/api', authStack, propertyRoutes);
+app.use('/api', propertyRoutes);
 
 // User Routes
 app.use('/api', authStack, userRoutes);
