@@ -28,18 +28,26 @@ type FakeStoredMessage = {
   content: string;
 };
 
+type LlmTurn = {
+  content: unknown;
+  tool_calls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+};
+
 function makeDeps(opts: {
   chunks: FakeChunk[];
   history?: FakeStoredMessage[];
   llmResponseContent?: unknown;
+  llmTurns?: LlmTurn[];
   historyLimit?: number;
   similarityThreshold?: number;
+  tools?: Record<string, (args: Record<string, unknown>) => Promise<string>>;
 }) {
   const llmCalls: BaseMessage[][] = [];
   const retrieverCalls: string[] = [];
   const historyQueries: unknown[] = [];
 
   const history = opts.history ?? [];
+  const turns = opts.llmTurns ? [...opts.llmTurns] : null;
 
   const deps: ChainDeps & {
     llmCalls: typeof llmCalls;
@@ -71,6 +79,9 @@ function makeDeps(opts: {
     llm: {
       invoke: vi.fn(async (messages: BaseMessage[]) => {
         llmCalls.push(messages);
+        if (turns && turns.length > 0) {
+          return turns.shift() as LlmTurn;
+        }
         return {
           content:
             opts.llmResponseContent !== undefined
@@ -79,6 +90,7 @@ function makeDeps(opts: {
         };
       }),
     },
+    tools: opts.tools,
     historyLimit: opts.historyLimit,
     similarityThreshold: opts.similarityThreshold,
     llmCalls,
@@ -325,5 +337,113 @@ describe("generateAnswer", () => {
     );
     expect(result.handoff).toBe(false);
     expect(deps.llm.invoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("generateAnswer with tool calling", () => {
+  it("executes requested tool and loops back to the LLM, returning final text", async () => {
+    const checkAvailability = vi.fn(async () => JSON.stringify([
+      { startsAt: "2026-05-10T14:00:00Z", endsAt: "2026-05-10T14:45:00Z" },
+    ]));
+
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "Agendamento", content: "regras", score: 0.8 }],
+      llmTurns: [
+        // Turno 1: LLM pede a tool
+        {
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              name: "check_availability",
+              args: {
+                propertyId: "11111111-1111-1111-1111-111111111111",
+                from: "2026-05-10T13:00:00Z",
+                to: "2026-05-10T16:00:00Z",
+              },
+            },
+          ],
+        },
+        // Turno 2: LLM responde texto final
+        { content: "Tenho um horário livre às 14h de sexta. Confirma?" },
+      ],
+      tools: { check_availability: checkAvailability },
+    });
+
+    const result = await generateAnswer(
+      { sessionId: "s1", userMessage: "quero visitar o imóvel X" },
+      deps,
+    );
+
+    expect(checkAvailability).toHaveBeenCalledTimes(1);
+    expect(checkAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        propertyId: "11111111-1111-1111-1111-111111111111",
+      }),
+    );
+    expect(deps.llm.invoke).toHaveBeenCalledTimes(2);
+    expect(result.answer).toBe("Tenho um horário livre às 14h de sexta. Confirma?");
+    expect(result.handoff).toBe(false);
+  });
+
+  it("stops after maxIterations=3 even if LLM keeps requesting tools", async () => {
+    const checkAvailability = vi.fn(async () => "[]");
+
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: 0.8 }],
+      llmTurns: [
+        { content: "", tool_calls: [{ id: "c1", name: "check_availability", args: {} }] },
+        { content: "", tool_calls: [{ id: "c2", name: "check_availability", args: {} }] },
+        { content: "", tool_calls: [{ id: "c3", name: "check_availability", args: {} }] },
+        { content: "", tool_calls: [{ id: "c4", name: "check_availability", args: {} }] },
+        { content: "giving up" },
+      ],
+      tools: { check_availability: checkAvailability },
+    });
+
+    const result = await generateAnswer(
+      { sessionId: "s1", userMessage: "loop" },
+      deps,
+    );
+
+    // Expect limit: 3 tool-executing turns, so at most 4 LLM calls (initial + 3 loops)
+    expect(deps.llm.invoke.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(checkAvailability.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(result.answer).toBeDefined();
+  });
+
+  it("returns fallback-like error text if a requested tool is missing from deps", async () => {
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: 0.8 }],
+      llmTurns: [
+        {
+          content: "",
+          tool_calls: [
+            { id: "call-1", name: "nonexistent_tool", args: {} },
+          ],
+        },
+        { content: "ok, entendi" },
+      ],
+      tools: {},
+    });
+
+    const result = await generateAnswer(
+      { sessionId: "s1", userMessage: "loop" },
+      deps,
+    );
+    // Mesmo com tool ausente, segue o loop (ToolMessage com erro) e chega ao final
+    expect(result.answer).toBe("ok, entendi");
+  });
+
+  it("when LLM response has no tool_calls, runs exactly once (backwards compatible)", async () => {
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: 0.8 }],
+    });
+    const result = await generateAnswer(
+      { sessionId: "s1", userMessage: "oi" },
+      deps,
+    );
+    expect(deps.llm.invoke).toHaveBeenCalledTimes(1);
+    expect(result.answer).toBe("Uma resposta fundamentada em português.");
   });
 });

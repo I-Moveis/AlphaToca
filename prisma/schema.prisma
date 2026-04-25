@@ -123,6 +123,11 @@ model ChatSession {
   // TTL da sessão. Após este instante, o worker cria uma nova sessão ACTIVE_BOT
   // em vez de reutilizar esta (evita arrastar histórico obsoleto de semanas atrás).
   expiresAt DateTime   @default(dbgenerated("(now() + interval '7 days')")) @map("expires_at")
+  // Proposta de agendamento emitida pela LLM (tool propose_visit_slot) ainda
+  // não confirmada pelo usuário. { propertyId, scheduledAt, expiresAt }.
+  // Se o próximo turno do usuário tiver intent=schedule_visit, o worker
+  // cria a Visit definitiva a partir daqui e limpa o campo.
+  pendingProposal Json? @map("pending_proposal")
 
   // Relacionamentos
   tenant   User      @relation("TenantChats", fields: [tenantId], references: [id])

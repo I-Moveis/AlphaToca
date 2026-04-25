@@ -3,6 +3,7 @@ import {
   AIMessage,
   HumanMessage,
   SystemMessage,
+  ToolMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { PrismaClient } from "@prisma/client";
@@ -13,6 +14,11 @@ import {
   retrieveRelevantChunks,
   type RetrievedChunk,
 } from "./ragRetrieverService";
+import {
+  createCheckAvailabilityTool,
+  createProposeVisitSlotTool,
+  type ProposalPrismaClient,
+} from "./ragTools";
 
 export interface GenerateAnswerInput {
   sessionId: string;
@@ -26,8 +32,19 @@ export interface GenerateAnswerResult {
   usedChunkIds: string[];
 }
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface ChatLLMResponse {
+  content: unknown;
+  tool_calls?: ToolCall[];
+}
+
 export interface ChatLLM {
-  invoke(messages: BaseMessage[]): Promise<{ content: unknown }>;
+  invoke(messages: BaseMessage[]): Promise<ChatLLMResponse>;
 }
 
 export interface Retriever {
@@ -36,15 +53,23 @@ export interface Retriever {
 
 export type PrismaChainClient = Pick<PrismaClient, "message">;
 
+export type ToolMap = Record<
+  string,
+  (args: Record<string, unknown>) => Promise<string>
+>;
+
 export interface ChainDeps {
   prisma: PrismaChainClient;
   retriever: Retriever;
   llm: ChatLLM;
+  tools?: ToolMap;
   historyLimit?: number;
   similarityThreshold?: number;
+  maxToolIterations?: number;
 }
 
 const DEFAULT_HISTORY_LIMIT = 10;
+const DEFAULT_MAX_TOOL_ITERATIONS = 3;
 const FALLBACK_ANSWER =
   "Obrigado pela sua mensagem! Para te dar a resposta mais precisa, vou transferir essa conversa para um dos nossos atendentes humanos. Em instantes alguém do nosso time falará com você por aqui.";
 
@@ -58,6 +83,12 @@ const SYSTEM_PROMPT = [
   "- Em caso de negociações sensíveis, litígios ou exceções à regra, informe ao usuário que você vai encaminhar para um atendente humano.",
   "- Seja breve e direto: respostas curtas funcionam melhor no WhatsApp.",
   "- Se o contexto não cobrir a pergunta, diga isso com honestidade e ofereça o encaminhamento para um humano.",
+  "",
+  "Agendamento de visitas (padrão PROPOR E CONFIRMAR):",
+  "- Quando o inquilino pedir para visitar um imóvel, use a tool check_availability para consultar horários livres.",
+  "- Escolha UM horário adequado e use a tool propose_visit_slot para registrar a proposta.",
+  "- Depois de chamar propose_visit_slot, apresente o horário em português e PERGUNTE se o usuário confirma. NÃO diga que a visita foi marcada.",
+  "- O sistema criará a visita definitiva APENAS no próximo turno, se o usuário confirmar explicitamente. Você não precisa se preocupar com isso — apenas proponha e aguarde.",
   "",
   "Papéis no histórico da conversa:",
   "- Mensagens prefixadas com \"[Proprietário]\" vêm do locador do imóvel, não do inquilino. Trate-as como correções supervisórias (ex.: disponibilidade do imóvel, preço atualizado), não como perguntas do cliente atual. Se houver conflito entre uma resposta anterior sua e uma mensagem [Proprietário], priorize a informação do [Proprietário].",
@@ -121,25 +152,42 @@ function extractTextContent(content: unknown): string {
 
 let defaultDepsCache: ChainDeps | null = null;
 
-function getDefaultDeps(): ChainDeps {
-  if (defaultDepsCache) return defaultDepsCache;
-  const apiKey = getGoogleApiKey();
-  const llm = new ChatGoogleGenerativeAI({
-    apiKey,
-    model: CHAT_MODEL,
-    temperature: 0.2,
-    maxRetries: 2,
+function getDefaultDeps(sessionId: string): ChainDeps {
+  // LLM, retriever e prisma são seguros para cachear; tools dependem de
+  // sessionId e são construídas a cada chamada.
+  if (!defaultDepsCache) {
+    const apiKey = getGoogleApiKey();
+    const llm = new ChatGoogleGenerativeAI({
+      apiKey,
+      model: CHAT_MODEL,
+      temperature: 0.2,
+      maxRetries: 2,
+    });
+    defaultDepsCache = {
+      prisma,
+      retriever: {
+        retrieve: (query) => retrieveRelevantChunks(query),
+      },
+      llm: {
+        invoke: (messages) =>
+          llm.invoke(messages) as Promise<ChatLLMResponse>,
+      },
+    };
+  }
+  const checkAvailability = createCheckAvailabilityTool();
+  const proposeVisit = createProposeVisitSlotTool({
+    sessionId,
+    prisma: prisma as unknown as ProposalPrismaClient,
   });
-  defaultDepsCache = {
-    prisma,
-    retriever: {
-      retrieve: (query) => retrieveRelevantChunks(query),
-    },
-    llm: {
-      invoke: (messages) => llm.invoke(messages) as Promise<{ content: unknown }>,
+  return {
+    ...defaultDepsCache,
+    tools: {
+      check_availability: async (args) =>
+        (await checkAvailability.invoke(args as any)) as string,
+      propose_visit_slot: async (args) =>
+        (await proposeVisit.invoke(args as any)) as string,
     },
   };
-  return defaultDepsCache;
 }
 
 export async function generateAnswer(
@@ -147,7 +195,7 @@ export async function generateAnswer(
   overrideDeps?: ChainDeps,
 ): Promise<GenerateAnswerResult> {
   const { sessionId, userMessage } = input;
-  const deps = overrideDeps ?? getDefaultDeps();
+  const deps = overrideDeps ?? getDefaultDeps(sessionId);
   const historyLimit = deps.historyLimit ?? DEFAULT_HISTORY_LIMIT;
   const threshold = deps.similarityThreshold ?? SIMILARITY_THRESHOLD;
 
@@ -179,7 +227,49 @@ export async function generateAnswer(
     new HumanMessage(userMessage),
   ];
 
-  const response = await deps.llm.invoke(messages);
+  const maxIterations = deps.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+  let response = await deps.llm.invoke(messages);
+  let iterations = 0;
+
+  while (
+    response.tool_calls &&
+    response.tool_calls.length > 0 &&
+    iterations < maxIterations
+  ) {
+    iterations++;
+    // Acopla a AIMessage com os tool_calls ao histórico, como o LangChain exige
+    messages.push(
+      new AIMessage({
+        content: extractTextContent(response.content),
+        tool_calls: response.tool_calls,
+      }),
+    );
+    for (const call of response.tool_calls) {
+      const handler = deps.tools?.[call.name];
+      let toolResult: string;
+      if (!handler) {
+        toolResult = JSON.stringify({
+          error: `tool_not_available: ${call.name}`,
+        });
+      } else {
+        try {
+          toolResult = await handler(call.args);
+        } catch (err) {
+          toolResult = JSON.stringify({
+            error: (err as Error).message ?? "tool_execution_error",
+          });
+        }
+      }
+      messages.push(
+        new ToolMessage({
+          tool_call_id: call.id,
+          content: toolResult,
+        }),
+      );
+    }
+    response = await deps.llm.invoke(messages);
+  }
+
   const answer = extractTextContent(response.content) || FALLBACK_ANSWER;
 
   return {
