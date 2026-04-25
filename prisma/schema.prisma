@@ -7,7 +7,6 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  directUrl  = env("DIRECT_URL")
   extensions = [vector] // Habilita a extensão vetorial no Postgres
 }
 
@@ -36,6 +35,13 @@ enum SenderType {
   LANDLORD
 }
 
+enum PropertyType {
+  APARTMENT
+  HOUSE
+  STUDIO
+  CONDO_HOUSE
+}
+
 enum ProcessStatus {
   TRIAGE
   VISIT_SCHEDULED
@@ -59,12 +65,12 @@ enum MessageStatus {
 // 3. Modelos (Tabelas)
 
 model User {
-  id              String   @id @default(uuid())
-  auth0Sub        String?  @unique @map("auth0_sub")
-  name            String
-  phoneNumber     String   @unique @map("phone_number")
-  role            Role     @default(TENANT)
-  createdAt       DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid())
+  auth0Sub    String?  @unique @map("auth0_sub")
+  name        String
+  phoneNumber String   @unique @map("phone_number")
+  role        Role     @default(TENANT)
+  createdAt   DateTime @default(now()) @map("created_at")
 
   // Relacionamentos inversos (Obrigações do Prisma)
   properties      Property[]      @relation("LandlordProperties")
@@ -82,6 +88,23 @@ model Property {
   price       Decimal        @db.Decimal(10, 2)
   status      PropertyStatus @default(AVAILABLE)
   address     String
+
+  // Novos campos para busca e filtros
+  type         PropertyType @default(APARTMENT)
+  bedrooms     Int          @default(0)
+  bathrooms    Int          @default(0)
+  parkingSpots Int          @default(0) @map("parking_spots")
+  area         Float        @default(0)
+  isFurnished  Boolean      @default(false) @map("is_furnished")
+  petsAllowed  Boolean      @default(false) @map("pets_allowed")
+  latitude     Float?
+  longitude    Float?
+  nearSubway   Boolean      @default(false) @map("near_subway")
+  isFeatured   Boolean      @default(false) @map("is_featured")
+  views        Int          @default(0)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  condoFee     Decimal?     @map("condo_fee") @db.Decimal(10, 2)
+  propertyTax  Decimal?     @map("property_tax") @db.Decimal(10, 2)
 
   // Relacionamentos
   landlord        User            @relation("LandlordProperties", fields: [landlordId], references: [id])
@@ -123,14 +146,14 @@ model ChatSession {
 }
 
 model Message {
-  id         String     @id @default(uuid())
-  wamid      String?    @unique @map("wamid")
-  sessionId  String     @map("session_id")
-  senderType SenderType @map("sender_type")
-  content    String     @db.Text
-  mediaUrl   String?      @map("media_url")
+  id         String        @id @default(uuid())
+  wamid      String?       @unique @map("wamid")
+  sessionId  String        @map("session_id")
+  senderType SenderType    @map("sender_type")
+  content    String        @db.Text
+  mediaUrl   String?       @map("media_url")
   status     MessageStatus @default(sent) @map("status")
-  timestamp  DateTime     @default(now())
+  timestamp  DateTime      @default(now())
 
   // Relacionamentos
   session ChatSession @relation(fields: [sessionId], references: [id])
@@ -168,17 +191,17 @@ model AiExtractedInsight {
 }
 
 model KnowledgeDocument {
-  id          String                       @id @default(uuid())
+  id          String                      @id @default(uuid())
   title       String
-  content     String                       @db.Text
+  content     String                      @db.Text
   // Configuração do vetor de embeddings gerado pelo LangChain (OpenAI text-embedding-3-small truncado).
   // 512 dims retém ~98% da qualidade de recuperação vs 1536 (Matryoshka embeddings).
   embedding   Unsupported("vector(512)")?
-  sourcePath  String                       @map("source_path")
-  chunkIndex  Int                          @map("chunk_index")
-  contentHash String                       @map("content_hash")
-  createdAt   DateTime                     @default(now()) @map("created_at")
-  updatedAt   DateTime                     @updatedAt @map("updated_at")
+  sourcePath  String                      @map("source_path")
+  chunkIndex  Int                         @map("chunk_index")
+  contentHash String                      @map("content_hash")
+  createdAt   DateTime                    @default(now()) @map("created_at")
+  updatedAt   DateTime                    @updatedAt @map("updated_at")
 
   @@unique([sourcePath, chunkIndex], name: "knowledge_documents_source_chunk_key")
   @@index([contentHash], name: "knowledge_documents_content_hash_idx")

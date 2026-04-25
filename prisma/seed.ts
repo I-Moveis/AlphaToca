@@ -57,11 +57,15 @@ export async function main() {
   for (const doc of docs) {
     const embeddingString = `[${doc.embedding.join(',')}]`;
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "knowledge_documents" (id, title, content, embedding) VALUES ($1, $2, $3, $4::vector)`,
+      `INSERT INTO "knowledge_documents" (id, title, content, embedding, source_path, chunk_index, content_hash, updated_at) VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)`,
       doc.id,
       doc.title,
       doc.content,
-      embeddingString
+      embeddingString,
+      doc.sourcePath,
+      doc.chunkIndex,
+      doc.contentHash,
+      new Date()
     );
   }
 
