@@ -6,6 +6,7 @@ import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
 import visitRoutes from './routes/visitRoutes';
+import rentalProcessRoutes from './routes/rentalProcessRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 
 // Validate Auth0 configuration at startup
@@ -33,6 +34,9 @@ app.use('/api', authStack, userRoutes);
 
 // Visit (booking) Routes
 app.use('/api', authStack, visitRoutes);
+
+// Rental Process Routes (triagem / insights extraídos pela IA)
+app.use('/api', authStack, rentalProcessRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);

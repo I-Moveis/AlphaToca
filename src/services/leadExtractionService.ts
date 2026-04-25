@@ -1,9 +1,4 @@
-// import { ChatAnthropic } from "@langchain/anthropic";
-// ^ Import comentado. A equipe Selene Nyx deve escolher o provider do LLM.
-//   Qualquer ChatModel do LangChain que implemente `.withStructuredOutput()` serve:
-//     import { ChatOpenAI } from "@langchain/openai";
-//     import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-//     import { ChatOllama } from "@langchain/ollama";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   HumanMessage,
   SystemMessage,
@@ -13,7 +8,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "../config/db";
-import { getAnthropicApiKey } from "../config/rag";
+import { CHAT_MODEL, getGoogleApiKey } from "../config/rag";
 
 export const INTENT_VALUES = [
   "search",
@@ -29,6 +24,11 @@ export const InsightsSchema = z.object({
   neighborhood: z.string().optional().nullable(),
   bedrooms: z.number().int().optional().nullable(),
   pets_allowed: z.boolean().optional().nullable(),
+  // Texto livre citado pelo usuário: "amanhã às 10h", "sábado de manhã", etc.
+  // Fica como string para a Fase C (tool calling) interpretar com a ajuda da LLM.
+  preferred_visit_date: z.string().optional().nullable(),
+  // Título ou identificador mencionado pelo usuário — usado pra casar com Property.
+  property_mentioned: z.string().optional().nullable(),
   intent: z.enum(INTENT_VALUES),
 });
 
@@ -52,15 +52,13 @@ export interface StructuredLLM {
 
 export type PrismaExtractionClient = Pick<
   PrismaClient,
-  "chatSession" | "rentalProcess" | "aiExtractedInsight"
+  "chatSession" | "rentalProcess" | "aiExtractedInsight" | "visit"
 >;
 
 export interface ExtractionDeps {
   prisma: PrismaExtractionClient;
   llm: StructuredLLM;
 }
-
-const CLAUDE_MODEL = "claude-sonnet-4-6" as const;
 
 const SYSTEM_PROMPT = [
   "Você é um extrator estruturado de informações do AlphaToca (aluguel de imóveis no Brasil).",
@@ -70,9 +68,11 @@ const SYSTEM_PROMPT = [
   "- neighborhood: bairro ou região desejada (ex: 'Pinheiros', 'zona sul').",
   "- bedrooms: número de quartos desejado (inteiro).",
   "- pets_allowed: true se o usuário mencionou que precisa aceitar pets; false se mencionou que NÃO tem pets; null caso não mencione.",
+  "- preferred_visit_date: texto de data/horário citado para visita (ex: 'amanhã às 10h', 'sábado de manhã'). Copie como o usuário escreveu.",
+  "- property_mentioned: nome/título/identificador de imóvel citado pelo usuário (ex: 'Apartamento no Jardim das Flores'). Copie o trecho.",
   "- intent: uma das opções abaixo, escolhida pela intenção predominante da mensagem:",
   "  * \"search\" — está procurando imóveis para alugar.",
-  "  * \"schedule_visit\" — quer agendar uma visita.",
+  "  * \"schedule_visit\" — quer agendar uma visita OU está confirmando/remarcando uma visita.",
   "  * \"contract_question\" — dúvida sobre contrato, documentação ou políticas.",
   "  * \"human_handoff\" — pede para falar com um humano, reclama, ou a mensagem envolve litígio/exceção.",
   "  * \"other\" — qualquer outra coisa (saudação, agradecimento, etc).",
@@ -99,6 +99,8 @@ const INSIGHT_KEYS: ReadonlyArray<keyof ExtractedInsights> = [
   "neighborhood",
   "bedrooms",
   "pets_allowed",
+  "preferred_visit_date",
+  "property_mentioned",
   "intent",
 ];
 
@@ -106,16 +108,14 @@ let defaultDepsCache: ExtractionDeps | null = null;
 
 function getDefaultDeps(): ExtractionDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  // const apiKey = getAnthropicApiKey();
-  // const base = new ChatAnthropic({
-  //   apiKey,
-  //   model: CLAUDE_MODEL,
-  //   temperature: 0,
-  //   timeout: 30000,
-  //   maxRetries: 2,
-  // });
-  const llm = null as any; // TODO: Equipe Selene Nyx deve definir o modelo LLM aqui (ex: ChatOpenAI, ChatGoogleGenerativeAI, ou ChatOllama)
-  const structured = llm.withStructuredOutput(InsightsSchema, {
+  const apiKey = getGoogleApiKey();
+  const base = new ChatGoogleGenerativeAI({
+    apiKey,
+    model: CHAT_MODEL,
+    temperature: 0,
+    maxRetries: 2,
+  });
+  const structured = base.withStructuredOutput(InsightsSchema, {
     name: "extract_lead_insights",
   });
   defaultDepsCache = {
@@ -155,15 +155,16 @@ export async function extractInsights(
       status: { not: "CLOSED" },
     },
     orderBy: { createdAt: "desc" },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!rentalProcess) {
     rentalProcess = await deps.prisma.rentalProcess.create({
       data: { tenantId: session.tenantId, status: "TRIAGE" },
-      select: { id: true },
+      select: { id: true, status: true },
     });
   }
   const rentalProcessId = rentalProcess.id;
+  const rentalProcessFull = rentalProcess;
 
   const upsertedKeys: string[] = [];
   for (const key of INSIGHT_KEYS) {
@@ -197,6 +198,22 @@ export async function extractInsights(
       data: { status: "WAITING_HUMAN" },
     });
     handoff = true;
+  }
+
+  // Transição TRIAGE → VISIT_SCHEDULED quando a intenção atual é de agendar
+  // E já existe uma Visit SCHEDULED no processo (criada pela Fase C via tool
+  // calling). Evita flag se o processo já mudou para VISIT_SCHEDULED ou adiante.
+  if (insights.intent === "schedule_visit" && rentalProcessFull.status === "TRIAGE") {
+    const scheduledVisit = await deps.prisma.visit.findFirst({
+      where: { rentalProcessId, status: "SCHEDULED" },
+      select: { id: true },
+    });
+    if (scheduledVisit) {
+      await deps.prisma.rentalProcess.update({
+        where: { id: rentalProcessId },
+        data: { status: "VISIT_SCHEDULED" },
+      });
+    }
   }
 
   return {
