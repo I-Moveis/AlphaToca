@@ -63,7 +63,7 @@ export const generateKnowledgeDocuments = (count: number) => {
     id: faker.string.uuid(),
     title: faker.lorem.words(4),
     content: faker.lorem.paragraphs(2),
-    embedding: Array.from({ length: 512 }).map(() => faker.number.float({ min: -1, max: 1 })),
+    embedding: Array.from({ length: 1536 }).map(() => faker.number.float({ min: -1, max: 1 })),
     sourcePath: faker.system.filePath(),
     chunkIndex: faker.number.int({ min: 0, max: 100 }),
     contentHash: faker.string.alphanumeric(32),
