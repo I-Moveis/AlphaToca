@@ -70,11 +70,11 @@ async function findConflicting(
   const where: Parameters<VisitPrismaClient['visit']['findMany']>[0] extends infer W
     ? W
     : never = {
-    status: 'SCHEDULED',
-    OR: [{ propertyId }, { landlordId }],
-    scheduledAt: { gte: windowStart, lte: windowEnd },
-    ...(excludeVisitId ? { NOT: { id: excludeVisitId } } : {}),
-  } as any;
+      status: 'SCHEDULED',
+      OR: [{ propertyId }, { landlordId }],
+      scheduledAt: { gte: windowStart, lte: windowEnd },
+      ...(excludeVisitId ? { NOT: { id: excludeVisitId } } : {}),
+    } as any;
 
   const candidates = (await deps.prisma.visit.findMany({
     where: where as any,
@@ -100,7 +100,8 @@ export async function createVisit(
   if (!property) {
     throw new VisitError('PROPERTY_NOT_FOUND', 404, { propertyId: input.propertyId });
   }
-  const landlordId = (property as { landlordId: string }).landlordId;
+  // const landlordId = (property as { landlordId: string }).landlordId;
+  const landlordId = (property as unknown as { landlordId: string }).landlordId;
 
   const conflict = await findConflicting(
     {
@@ -229,7 +230,8 @@ export async function listAvailableSlots(
   if (!property) {
     throw new VisitError('PROPERTY_NOT_FOUND', 404, { propertyId: query.propertyId });
   }
-  const landlordId = (property as { landlordId: string }).landlordId;
+  // const landlordId = (property as { landlordId: string }).landlordId;
+  const landlordId = (property as unknown as { landlordId: string }).landlordId;
 
   // Busca tudo que possa colidir no intervalo — property OU landlord ocupados
   const busy = (await deps.prisma.visit.findMany({

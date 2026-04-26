@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { propertyService } from '../services/propertyService';
 import { createPropertySchema, updatePropertySchema } from '../utils/propertyValidation';
+import { propertySearchSchema } from '../utils/searchValidation';
 
 export const propertyController = {
   async create(req: Request, res: Response, next: NextFunction) {
@@ -17,6 +18,16 @@ export const propertyController = {
     try {
       const properties = await propertyService.listProperties();
       return res.status(200).json(properties);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async search(req: Request, res: Response, next: NextFunction) {
+    try {
+      const validatedParams = propertySearchSchema.parse(req.query);
+      const result = await propertyService.searchProperties(validatedParams);
+      return res.status(200).json(result);
     } catch (error) {
       next(error);
     }

@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_pwd}
       POSTGRES_DB: ${POSTGRES_DB:-alphatoca}
     ports:
-      - "5433:5432"
+      - "${DB_PORT_EXTERNAL:-5433}:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     restart: unless-stopped

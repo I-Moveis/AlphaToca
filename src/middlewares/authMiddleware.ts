@@ -53,7 +53,7 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
     const user = await userService.upsertUserFromAuth0(
       authData.payload as Record<string, unknown>
     );
-    req.localUser = user;
+    (req as any).localUser = user;
     next();
   } catch (error) {
     console.error('[AuthSync] Error syncing user:', error);
@@ -70,7 +70,7 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
  */
 export const requireRole = (...allowedRoles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const localUser = req.localUser;
+    const localUser = (req as any).localUser;
 
     if (!localUser) {
       return res.status(403).json({

@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "ingest:knowledge": "ts-node src/scripts/ingestKnowledge.ts",
     "eval:rag": "ts-node src/scripts/evalRag.ts",
-    "conductor:sync": "echo 'Run automation script'"
+    "conductor:sync": "echo 'Run automation script'",
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",

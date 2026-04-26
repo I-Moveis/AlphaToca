@@ -28,6 +28,44 @@ const router = Router();
  *                 type: number
  *               address:
  *                 type: string
+ *                 minLength: 5
+ *                 example: Rua das Flores, 123, São Paulo - SP
+ *               type:
+ *                 type: string
+ *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *               bedrooms:
+ *                 type: integer
+ *                 example: 2
+ *               bathrooms:
+ *                 type: integer
+ *                 example: 1
+ *               parkingSpots:
+ *                 type: integer
+ *                 example: 1
+ *               area:
+ *                 type: number
+ *                 example: 65.5
+ *               isFurnished:
+ *                 type: boolean
+ *                 example: false
+ *               petsAllowed:
+ *                 type: boolean
+ *                 example: true
+ *               latitude:
+ *                 type: number
+ *                 example: -23.5489
+ *               longitude:
+ *                 type: number
+ *                 example: -46.6388
+ *               nearSubway:
+ *                 type: boolean
+ *                 example: false
+ *               isFeatured:
+ *                 type: boolean
+ *                 example: false
+ *               views:
+ *                 type: integer
+ *                 example: 150
  *               status:
  *                 type: string
  *                 enum: [AVAILABLE, IN_NEGOTIATION, RENTED]
@@ -45,25 +83,117 @@ const router = Router();
  */
 router.post('/properties', propertyController.create);
 
+router.get('/properties', propertyController.list);
+
 /**
  * @swagger
- * /properties:
+ * /properties/search:
  *   get:
- *     summary: Listar todas as propriedades
+ *     summary: Busca avançada de propriedades com filtros e paginação
  *     tags: [Propriedades]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *       - in: query
+ *         name: minPrice
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: maxPrice
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: minBedrooms
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minBathrooms
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minParkingSpots
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: minArea
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: maxArea
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: isFurnished
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: petsAllowed
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: nearSubway
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: orderBy
+ *         schema:
+ *           type: string
+ *           enum: [createdAt, views, priceAsc, priceDesc, isFeatured, nearest]
+ *       - in: query
+ *         name: lat
+ *         description: Latitude do usuário para busca por proximidade
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: lng
+ *         description: Longitude do usuário para busca por proximidade
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: radius
+ *         description: Raio de busca em quilômetros
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
  *     responses:
  *       200:
- *         description: Lista de propriedades recuperada com sucesso
+ *         description: Resultados da busca
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Property'
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Property'
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     total:
+ *                       type: integer
+ *                     page:
+ *                       type: integer
+ *                     limit:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/properties', propertyController.list);
+router.get('/properties/search', propertyController.search);
 
 /**
  * @swagger
