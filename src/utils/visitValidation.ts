@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { VisitStatus } from '@prisma/client';
+import {
+  DEFAULT_VISIT_DURATION_MINUTES,
+  MAX_VISIT_DURATION_MINUTES,
+  MIN_VISIT_DURATION_MINUTES,
+} from '../config/visits';
 
 const scheduledAtField = z.coerce.date({
   errorMap: () => ({ message: 'scheduledAt must be a valid ISO-8601 datetime' }),
@@ -8,15 +13,15 @@ const scheduledAtField = z.coerce.date({
 const durationMinutesField = z
   .number()
   .int()
-  .min(15, 'durationMinutes must be at least 15')
-  .max(180, 'durationMinutes must be at most 180');
+  .min(MIN_VISIT_DURATION_MINUTES, `durationMinutes must be at least ${MIN_VISIT_DURATION_MINUTES}`)
+  .max(MAX_VISIT_DURATION_MINUTES, `durationMinutes must be at most ${MAX_VISIT_DURATION_MINUTES}`);
 
 export const createVisitSchema = z.object({
   propertyId: z.string().uuid({ message: 'Invalid propertyId format' }),
   tenantId: z.string().uuid({ message: 'Invalid tenantId format' }),
   rentalProcessId: z.string().uuid({ message: 'Invalid rentalProcessId format' }).optional(),
   scheduledAt: scheduledAtField,
-  durationMinutes: durationMinutesField.optional().default(45),
+  durationMinutes: durationMinutesField.optional().default(DEFAULT_VISIT_DURATION_MINUTES),
   notes: z.string().max(2000).optional(),
 });
 
@@ -44,7 +49,13 @@ export const availabilityQuerySchema = z.object({
   propertyId: z.string().uuid({ message: 'propertyId is required' }),
   from: z.coerce.date(),
   to: z.coerce.date(),
-  slotMinutes: z.coerce.number().int().min(15).max(180).optional().default(45),
+  slotMinutes: z.coerce
+    .number()
+    .int()
+    .min(MIN_VISIT_DURATION_MINUTES)
+    .max(MAX_VISIT_DURATION_MINUTES)
+    .optional()
+    .default(DEFAULT_VISIT_DURATION_MINUTES),
 });
 
 export type CreateVisitInput = z.infer<typeof createVisitSchema>;

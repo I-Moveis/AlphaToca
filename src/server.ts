@@ -4,6 +4,7 @@ import { setupSwagger } from './config/swagger';
 import { bootstrapLangSmith } from './config/langsmith';
 import { assertRagSecrets } from './config/rag';
 import { validateWebhookConfig } from './controllers/webhookController';
+import { logger } from './config/logger';
 
 const port = process.env.PORT || 3000;
 
@@ -16,5 +17,5 @@ bootstrapLangSmith();
 setupSwagger(app); // Habilita a documentação visual do Swagger
 
 app.listen(port, () => {
-    console.log(`[server]: Server is running at http://localhost:${port}`);
+    logger.info({ port }, '[server] server is running');
 });

@@ -6,6 +6,7 @@ import type {
   ListVisitsQuery,
   AvailabilityQuery,
 } from '../utils/visitValidation';
+import { MAX_VISIT_DURATION_MINUTES } from '../config/visits';
 
 export type VisitErrorCode = 'PROPERTY_NOT_FOUND' | 'CONFLICT' | 'VISIT_NOT_FOUND';
 
@@ -33,9 +34,11 @@ const defaultDeps: VisitDeps = {
   prisma: prisma as VisitPrismaClient,
 };
 
-// Busca candidatos a conflito numa janela larga ([start-180min, end]) e filtra
-// em JS pela sobreposição real. 180 min cobre o maior durationMinutes válido.
-const MAX_DURATION_MINUTES = 180;
+// Busca candidatos a conflito numa janela larga ([start - MAX, end]) e filtra
+// em JS pela sobreposição real. MAX_VISIT_DURATION_MINUTES cobre o maior
+// durationMinutes permitido pela validação Zod — derivar daqui garante que
+// a janela SQL e o limite da API permanecem sincronizados.
+const MAX_DURATION_MINUTES = MAX_VISIT_DURATION_MINUTES;
 
 function endOf(v: { scheduledAt: Date; durationMinutes: number }): Date {
   return new Date(v.scheduledAt.getTime() + v.durationMinutes * 60_000);

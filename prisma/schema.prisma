@@ -235,6 +235,21 @@ model RentalDocument {
   @@map("rental_documents")
 }
 
+// Persistência de payloads de webhook que falharam validação ou processamento.
+// Usada para investigação posterior sem precisar escanear logs agregados.
+model WebhookFailure {
+  id        String   @id @default(uuid())
+  source    String // Ex.: "whatsapp". Futuro: "stripe", "mercadopago", etc.
+  rawBody   Json     @map("raw_body")
+  headers   Json?
+  error     String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  reviewed  Boolean  @default(false)
+
+  @@index([source, reviewed, createdAt], name: "webhook_failures_triage_idx")
+  @@map("webhook_failures")
+}
+
 model Visit {
   id              String      @id @default(uuid())
   propertyId      String      @map("property_id")
