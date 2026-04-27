@@ -6,6 +6,7 @@ import {
   generateMessages,
   generateKnowledgeDocuments,
 } from './generators';
+import { demoUsers, demoProperties } from './demoData';
 
 import prisma from '../src/config/db';
 
@@ -25,7 +26,8 @@ export async function main() {
 
   // 2. Generate and insert Users
   console.log('Generating Users...');
-  const users = generateUsers(50);
+  const randomUsers = generateUsers(48);
+  const users = [...demoUsers, ...randomUsers];
   await prisma.user.createMany({ data: users });
 
   const landlordIds = users.filter((u) => u.role === 'LANDLORD').map((u) => u.id);
@@ -37,7 +39,8 @@ export async function main() {
 
   // 3. Generate and insert Properties
   console.log('Generating Properties...');
-  const properties = generateProperties(100, landlordIds);
+  const randomProperties = generateProperties(98, landlordIds);
+  const properties = [...demoProperties, ...randomProperties];
   await prisma.property.createMany({ data: properties });
 
   // 4. Generate and insert Chat Sessions

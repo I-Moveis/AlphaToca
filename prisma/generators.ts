@@ -19,6 +19,9 @@ export const generateProperties = (count: number, landlordIds: string[]) => {
     price: faker.number.float({ min: 1000, max: 15000, fractionDigits: 2 }),
     status: faker.helpers.arrayElement(['AVAILABLE', 'IN_NEGOTIATION', 'RENTED']),
     address: faker.location.streetAddress(),
+    city: faker.location.city(),
+    state: faker.location.state({ abbreviated: true }),
+    zipCode: faker.location.zipCode(),
 
     // Novos campos para busca e filtros
     type: faker.helpers.arrayElement(['APARTMENT', 'HOUSE', 'STUDIO', 'CONDO_HOUSE']),
