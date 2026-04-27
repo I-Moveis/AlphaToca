@@ -4,6 +4,8 @@ import { messageQueue } from '../queues/whatsappQueue';
 import { WhatsAppWebhookSchema } from '../schemas/whatsappSchema';
 import { updateMessageStatus } from '../services/messageStatusService';
 import { verifyMetaSignature } from '../utils/verifyMetaSignature';
+import { logger } from '../config/logger';
+import prisma from '../config/db';
 
 /**
  * Valida no startup que as variáveis de ambiente necessárias ao webhook
@@ -23,7 +25,7 @@ export function validateWebhookConfig(): void {
             '[Webhook] META_APP_SECRET não configurado. Obtenha em developers.facebook.com/apps/{id}/settings/basic.',
         );
     }
-    console.log('[Webhook] Configuração validada com sucesso.');
+    logger.info('[webhook] configuration validated');
 }
 
 export const verifyWebhook = (req: Request, res: Response) => {
@@ -34,10 +36,10 @@ export const verifyWebhook = (req: Request, res: Response) => {
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe' && token === verifyToken) {
-        console.log('[Webhook] Webhook verified successfully.');
+        logger.info('[webhook] verification handshake succeeded');
         res.status(200).send(challenge);
     } else {
-        console.warn('[Webhook] Failed to verify webhook');
+        logger.warn({ mode }, '[webhook] verification handshake failed');
         res.sendStatus(403);
     }
 };
@@ -49,14 +51,14 @@ export const receiveMessage = async (req: Request, res: Response, _next: NextFun
 
         if (!isTestEnv) {
             if (!appSecret) {
-                console.error('[Webhook] META_APP_SECRET ausente; rejeitando requisição.');
+                logger.error('[webhook] META_APP_SECRET missing; rejecting request');
                 res.status(500).send('EVENT_RECEIVED');
                 return;
             }
 
             const signatureHeader = req.header('x-hub-signature-256');
             if (!verifyMetaSignature(req.rawBody, signatureHeader, appSecret)) {
-                console.warn('[Webhook] Assinatura HMAC inválida; requisição rejeitada.');
+                logger.warn('[webhook] HMAC signature invalid; request rejected');
                 res.status(401).send('EVENT_RECEIVED');
                 return;
             }
@@ -64,10 +66,10 @@ export const receiveMessage = async (req: Request, res: Response, _next: NextFun
 
         const value = req.body?.entry?.[0]?.changes?.[0]?.value;
         if (value?.statuses) {
-            console.log(`\x1b[35m--- RECIBO DE STATUS DA META ---\x1b[0m\n${JSON.stringify(value.statuses, null, 2)}`);
+            logger.info({ statuses: value.statuses }, '[webhook] meta status receipt');
             for (const s of value.statuses as Array<{ id: string; status: 'failed' | 'sent' | 'delivered' | 'read' }>) {
                 updateMessageStatus({ id: s.id, status: s.status }).catch((err) => {
-                    console.error('[Webhook] Erro ao processar status:', err);
+                    logger.error({ err, statusId: s.id }, '[webhook] failed to persist status');
                 });
             }
             res.sendStatus(200);
@@ -88,11 +90,31 @@ export const receiveMessage = async (req: Request, res: Response, _next: NextFun
         }
     } catch (error) {
         if (error instanceof ZodError) {
-            console.error(`\x1b[31m[Webhook ZodError]\x1b[0m Payload inválido rejeitado: ${JSON.stringify(error.errors)}`);
+            logger.error(
+                { errors: error.errors },
+                '[webhook] payload rejected by Zod validation',
+            );
+            // Persiste payload cru para investigação posterior. Nunca deixar
+            // isso bloquear a resposta 200 à Meta (swallow + log on failure).
+            prisma.webhookFailure
+                .create({
+                    data: {
+                        source: 'whatsapp',
+                        rawBody: req.body ?? {},
+                        headers: req.headers as unknown as object,
+                        error: JSON.stringify(error.errors),
+                    },
+                })
+                .catch((persistErr) => {
+                    logger.error(
+                        { err: persistErr },
+                        '[webhook] failed to persist webhook_failure',
+                    );
+                });
             res.status(200).send('EVENT_RECEIVED');
             return;
         }
-        console.error('[Webhook] Erro inesperado:', error);
+        logger.error({ err: error }, '[webhook] unexpected error');
         res.status(200).send('EVENT_RECEIVED');
     }
 };

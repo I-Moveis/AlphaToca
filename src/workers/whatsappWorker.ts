@@ -6,11 +6,19 @@ import prisma from '../config/db';
 import { sendMessage as defaultSendMessage, SendMessageResponse } from '../services/whatsappService';
 import { generateAnswer as defaultGenerateAnswer, GenerateAnswerResult } from '../services/ragChainService';
 import { extractInsights as defaultExtractInsights, ExtractInsightsResult } from '../services/leadExtractionService';
+import { logger, type Logger } from '../config/logger';
+import { checkPhoneRateLimit, type PhoneRateLimitResult } from '../utils/phoneRateLimiter';
 
 export const RAG_ERROR_FALLBACK =
     'Desculpe, tive um problema técnico para responder agora. Um de nossos atendentes humanos vai continuar esse atendimento em instantes.';
 
+export const RATE_LIMIT_REPLY =
+    'Você enviou várias mensagens muito rápido. Aguarde alguns instantes e tente novamente, por favor.';
+
 export const LEAD_EXTRACTION_CONCURRENCY = 3;
+
+export const PHONE_RATE_LIMIT = Number(process.env.PHONE_RATE_LIMIT ?? 10);
+export const PHONE_RATE_WINDOW_SECONDS = Number(process.env.PHONE_RATE_WINDOW_SECONDS ?? 60);
 
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 
@@ -66,6 +74,8 @@ type ExtractInsightsFn = (input: {
     userMessage: string;
 }) => Promise<ExtractInsightsResult>;
 
+export type PhoneRateLimitCheck = (phoneNumber: string) => Promise<PhoneRateLimitResult>;
+
 export interface WhatsappHandlerDeps {
     prisma: PrismaWorkerClient;
     sendMessage: SendMessageFn;
@@ -73,6 +83,8 @@ export interface WhatsappHandlerDeps {
     extractInsights: ExtractInsightsFn;
     scheduleMicrotask?: (task: () => void) => void;
     leadExtractionLimiter?: ConcurrencyLimiter;
+    log?: Logger;
+    checkRateLimit?: PhoneRateLimitCheck;
 }
 
 export interface WhatsappHandlerResult {
@@ -86,6 +98,7 @@ export async function handleWhatsappMessage(
     payload: WhatsAppWebhookPayload,
     deps: WhatsappHandlerDeps,
 ): Promise<WhatsappHandlerResult> {
+    const log = deps.log ?? logger;
     const changeValue = (payload as any).entry?.[0]?.changes?.[0]?.value;
     if (!changeValue) {
         return { success: true, reason: 'ignored_empty_changes' };
@@ -102,7 +115,7 @@ export async function handleWhatsappMessage(
     if (wamid) {
         const existing = await deps.prisma.message.findUnique({ where: { wamid } });
         if (existing) {
-            console.log(`\x1b[33m[Worker]\x1b[0m Mensagem ${wamid} já processada. Ignorando.`);
+            log.info({ wamid }, '[worker] duplicate wamid; skipping');
             return { success: true, reason: 'duplicate_wamid' };
         }
     }
@@ -110,6 +123,22 @@ export async function handleWhatsappMessage(
     const phoneNumber = contact.wa_id;
     const contactName = contact.profile?.name || 'Lead';
     const messageText = message.text?.body || '[Mídia Recebida]';
+
+    if (deps.checkRateLimit) {
+        const rl = await deps.checkRateLimit(phoneNumber);
+        if (!rl.allowed) {
+            log.warn(
+                { phoneNumber, count: rl.count, limit: rl.limit, retryAfterSeconds: rl.retryAfterSeconds },
+                '[worker] phone rate limit exceeded',
+            );
+            try {
+                await deps.sendMessage(phoneNumber, RATE_LIMIT_REPLY);
+            } catch (err) {
+                log.error({ err }, '[worker] failed to send rate-limit reply');
+            }
+            return { success: true, reason: 'rate_limited' };
+        }
+    }
 
     const user = await deps.prisma.user.upsert({
         where: { phoneNumber },
@@ -129,11 +158,14 @@ export async function handleWhatsappMessage(
     const expired = isSessionExpired(chatSession);
     if (!chatSession || chatSession.status !== 'ACTIVE_BOT' || expired) {
         if (chatSession) {
-            const reason = expired
-                ? `expirada em ${chatSession.expiresAt?.toISOString?.() ?? 'data desconhecida'}`
-                : `status ${chatSession.status}`;
-            console.log(
-                `\x1b[33m[Worker]\x1b[0m Sessão ${chatSession.id} (${reason}); criando nova sessão ACTIVE_BOT.`,
+            log.info(
+                {
+                    sessionId: chatSession.id,
+                    reason: expired ? 'expired' : 'inactive',
+                    previousStatus: chatSession.status,
+                    expiresAt: chatSession.expiresAt?.toISOString?.() ?? null,
+                },
+                '[worker] replacing inactive session with new ACTIVE_BOT',
             );
         }
         chatSession = await deps.prisma.chatSession.create({
@@ -166,7 +198,7 @@ export async function handleWhatsappMessage(
         answer = result.answer;
         handoff = result.handoff;
     } catch (err) {
-        console.error(`\x1b[31m[Worker]\x1b[0m Falha no RAG chain:`, err);
+        log.error({ err }, '[worker] RAG chain failure');
         answer = RAG_ERROR_FALLBACK;
         handoff = true;
         ragError = true;
@@ -177,9 +209,7 @@ export async function handleWhatsappMessage(
         const response = await deps.sendMessage(phoneNumber, answer);
         outboundWamid = response.messages?.[0]?.id ?? null;
     } catch (sendError) {
-        console.error(
-            `\x1b[31m[Worker]\x1b[0m Falha ao enviar mensagem WhatsApp: ${(sendError as Error).message}`,
-        );
+        log.error({ err: sendError }, '[worker] failed to send WhatsApp message');
     }
 
     await deps.prisma.message.create({
@@ -211,14 +241,15 @@ export async function handleWhatsappMessage(
                     }),
                 )
                 .catch((err) => {
-                    console.error(
-                        `\x1b[31m[Worker]\x1b[0m Lead extraction falhou para sessão ${sessionIdForExtraction}: ${(err as Error).message}`,
+                    log.error(
+                        { err, sessionId: sessionIdForExtraction },
+                        '[worker] lead extraction failed',
                     );
                 });
         });
     }
 
-    console.log(`\x1b[32m[Worker]\x1b[0m Mensagem de ${phoneNumber} processada com sucesso!`);
+    log.info({ phoneNumber, sessionId: chatSession.id, handoff, ragError }, '[worker] message processed');
     return { success: true, handoff, ragError };
 }
 
@@ -233,29 +264,35 @@ const connection = new IORedis(process.env.REDIS_URL, {
 });
 
 connection.on('error', (err) => {
-    console.error(`\x1b[31m[Worker ERRO]\x1b[0m Redis connection failed: ${err.message}`);
+    logger.error({ err }, '[worker] redis connection failed');
     process.exit(1);
 });
 
 export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
     'whatsapp-messages',
     async (job: Job<WhatsAppWebhookPayload>) => {
-        console.log(`\x1b[32m[Worker]\x1b[0m Processando Job ID ${job.id}`);
+        const wamid = (job.data as any)?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id;
+        const jobLog = logger.child({ jobId: job.id, wamid });
+        jobLog.info('[worker] processing job');
         try {
             return await handleWhatsappMessage(job.data, {
                 prisma,
                 sendMessage: defaultSendMessage,
                 generateAnswer: defaultGenerateAnswer,
                 extractInsights: defaultExtractInsights,
+                log: jobLog,
+                checkRateLimit: (phoneNumber) =>
+                    checkPhoneRateLimit(connection, phoneNumber, {
+                        limit: PHONE_RATE_LIMIT,
+                        windowSeconds: PHONE_RATE_WINDOW_SECONDS,
+                    }),
             });
         } catch (dbError: any) {
             if (dbError?.code === 'P2002' && dbError?.meta?.target?.includes('wamid')) {
-                console.log(
-                    `\x1b[33m[Worker]\x1b[0m Mensagem já existe no banco (unique constraint). Ignorando.`,
-                );
+                jobLog.info('[worker] duplicate wamid unique constraint; skipping');
                 return { success: true, reason: 'duplicate_wamid_db' };
             }
-            console.error(`\x1b[31m[Worker]\x1b[0m Falha no Job ${job.id}:`, dbError);
+            jobLog.error({ err: dbError }, '[worker] job failed');
             throw dbError;
         }
     },
@@ -263,15 +300,16 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
 );
 
 whatsappWorker.on('completed', (job: Job) => {
-    console.log(`\x1b[36m[Worker Info]\x1b[0m Trello de Eventos rodou no Job ${job.id}`);
+    logger.info({ jobId: job.id }, '[worker] job completed');
 });
 
 whatsappWorker.on('failed', (job: Job | undefined, err: Error) => {
     const attemptsMade = job?.attemptsMade ?? 0;
     const maxAttempts = job?.opts?.attempts ?? 1;
     const exhausted = attemptsMade >= maxAttempts;
-    const level = exhausted ? 'DEAD-LETTER' : 'RETRY';
-    console.error(
-        `\x1b[31m[Worker ERRO ${level}]\x1b[0m Job ${job?.id} falhou (tentativa ${attemptsMade}/${maxAttempts}): ${err.message}`,
+    const level = exhausted ? 'dead-letter' : 'retry';
+    logger.error(
+        { jobId: job?.id, attemptsMade, maxAttempts, level, err },
+        `[worker] job failed (${level})`,
     );
 });
