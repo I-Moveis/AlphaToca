@@ -15,6 +15,9 @@ export const RAG_ERROR_FALLBACK =
 export const RATE_LIMIT_REPLY =
     'Você enviou várias mensagens muito rápido. Aguarde alguns instantes e tente novamente, por favor.';
 
+export const NON_TEXT_REPLY =
+    'Por enquanto só consigo entender mensagens de texto. Pode me mandar sua dúvida escrita, por favor?';
+
 export const LEAD_EXTRACTION_CONCURRENCY = Number(process.env.LEAD_EXTRACTION_CONCURRENCY ?? 3);
 
 export const PHONE_RATE_LIMIT = Number(process.env.PHONE_RATE_LIMIT ?? 10);
@@ -122,7 +125,25 @@ export async function handleWhatsappMessage(
 
     const phoneNumber = contact.wa_id;
     const contactName = contact.profile?.name || 'Lead';
-    const messageText = message.text?.body || '[Mídia Recebida]';
+
+    // Hoje o bot só processa texto. Para qualquer outro tipo (image, audio,
+    // sticker, location, unsupported…), respondemos com uma mensagem padrão
+    // pedindo texto e encerramos — sem persistir nada, sem chamar RAG.
+    const messageBody = message.text?.body;
+    if (message.type !== 'text' || !messageBody) {
+        log.info(
+            { phoneNumber, type: message.type },
+            '[worker] non-text message received; sending default reply',
+        );
+        try {
+            await deps.sendMessage(phoneNumber, NON_TEXT_REPLY);
+        } catch (err) {
+            log.error({ err }, '[worker] failed to send non-text reply');
+        }
+        return { success: true, reason: 'non_text_message' };
+    }
+
+    const messageText = messageBody;
 
     if (deps.checkRateLimit) {
         const rl = await deps.checkRateLimit(phoneNumber);

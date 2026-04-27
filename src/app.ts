@@ -16,6 +16,12 @@ validateAuthConfig();
 
 const app: Express = express();
 
+// Confia no primeiro proxy da cadeia (ngrok em dev, load balancer em produção).
+// Sem isso, o express-rate-limit reclama que X-Forwarded-For está presente mas
+// o Express não foi instruído a confiar nele — e o IP contado vira o do proxy,
+// não o do cliente real.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(
     express.json({
