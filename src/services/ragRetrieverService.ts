@@ -30,7 +30,20 @@ interface RetrievedRow {
   distance: number | string;
 }
 
+// Serializa um vetor no formato textual aceito pelo pgvector. Ver comentário
+// equivalente em src/scripts/ingestKnowledge.ts — validação estrita é proposital.
 export function toVectorLiteral(vector: number[]): string {
+  if (!Array.isArray(vector)) {
+    throw new Error("[toVectorLiteral] vector must be a number[]");
+  }
+  for (let i = 0; i < vector.length; i++) {
+    const v = vector[i];
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new Error(
+        `[toVectorLiteral] invalid component at index ${i}: ${String(v)}`,
+      );
+    }
+  }
   return `[${vector.join(",")}]`;
 }
 

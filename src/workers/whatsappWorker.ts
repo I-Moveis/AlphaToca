@@ -15,7 +15,7 @@ export const RAG_ERROR_FALLBACK =
 export const RATE_LIMIT_REPLY =
     'Você enviou várias mensagens muito rápido. Aguarde alguns instantes e tente novamente, por favor.';
 
-export const LEAD_EXTRACTION_CONCURRENCY = 3;
+export const LEAD_EXTRACTION_CONCURRENCY = Number(process.env.LEAD_EXTRACTION_CONCURRENCY ?? 3);
 
 export const PHONE_RATE_LIMIT = Number(process.env.PHONE_RATE_LIMIT ?? 10);
 export const PHONE_RATE_WINDOW_SECONDS = Number(process.env.PHONE_RATE_WINDOW_SECONDS ?? 60);

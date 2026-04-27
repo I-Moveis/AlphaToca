@@ -38,7 +38,7 @@ export type PrismaIngestClient = Pick<
   "$queryRawUnsafe" | "$executeRawUnsafe" | "$transaction"
 >;
 
-export const EMBEDDING_BATCH_SIZE = 100;
+export const EMBEDDING_BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE ?? 100);
 
 export interface IngestDeps {
   prisma: PrismaIngestClient;
@@ -64,7 +64,22 @@ export function deriveTitle(filePath: string, chunkIndex: number): string {
   return `${base}#${chunkIndex}`;
 }
 
+// Serializa um vetor no formato textual aceito pelo pgvector: "[n1,n2,...]".
+// Valida estritamente porque o literal resultante é interpolado via bind
+// param ($N::vector) — um elemento não-numérico quebraria o cast do Postgres
+// com mensagem confusa. Rejeitar cedo dá erro legível no cliente.
 export function toVectorLiteral(vector: number[]): string {
+  if (!Array.isArray(vector)) {
+    throw new Error("[toVectorLiteral] vector must be a number[]");
+  }
+  for (let i = 0; i < vector.length; i++) {
+    const v = vector[i];
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new Error(
+        `[toVectorLiteral] invalid component at index ${i}: ${String(v)}`,
+      );
+    }
+  }
   return `[${vector.join(",")}]`;
 }
 
