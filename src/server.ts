@@ -2,8 +2,14 @@ import app from './app';
 import './workers/whatsappWorker';
 import { setupSwagger } from './config/swagger';
 import { bootstrapLangSmith } from './config/langsmith';
+import { assertRagSecrets } from './config/rag';
+import { validateWebhookConfig } from './controllers/webhookController';
 
 const port = process.env.PORT || 3000;
+
+// Fail-fast: valida configuração crítica antes de aceitar requisições.
+assertRagSecrets();
+validateWebhookConfig();
 
 // Inicializa integrações
 bootstrapLangSmith();

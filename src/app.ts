@@ -14,7 +14,13 @@ validateAuthConfig();
 const app: Express = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(
+    express.json({
+        verify: (req, _res, buf) => {
+            (req as express.Request).rawBody = buf;
+        },
+    }),
+);
 
 // Health Check Route
 app.get('/health', (req: Request, res: Response) => {

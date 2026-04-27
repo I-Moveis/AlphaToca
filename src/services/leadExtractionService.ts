@@ -1,9 +1,4 @@
-// import { ChatAnthropic } from "@langchain/anthropic";
-// ^ Import comentado. A equipe Selene Nyx deve escolher o provider do LLM.
-//   Qualquer ChatModel do LangChain que implemente `.withStructuredOutput()` serve:
-//     import { ChatOpenAI } from "@langchain/openai";
-//     import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-//     import { ChatOllama } from "@langchain/ollama";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   HumanMessage,
   SystemMessage,
@@ -13,7 +8,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "../config/db";
-import { getAnthropicApiKey } from "../config/rag";
+import { CHAT_MODEL, getGoogleApiKey } from "../config/rag";
 
 export const INTENT_VALUES = [
   "search",
@@ -60,8 +55,6 @@ export interface ExtractionDeps {
   llm: StructuredLLM;
 }
 
-const CLAUDE_MODEL = "claude-sonnet-4-6" as const;
-
 const SYSTEM_PROMPT = [
   "Você é um extrator estruturado de informações do AlphaToca (aluguel de imóveis no Brasil).",
   "",
@@ -106,15 +99,12 @@ let defaultDepsCache: ExtractionDeps | null = null;
 
 function getDefaultDeps(): ExtractionDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  // const apiKey = getAnthropicApiKey();
-  // const base = new ChatAnthropic({
-  //   apiKey,
-  //   model: CLAUDE_MODEL,
-  //   temperature: 0,
-  //   timeout: 30000,
-  //   maxRetries: 2,
-  // });
-  const llm = null as any; // TODO: Equipe Selene Nyx deve definir o modelo LLM aqui (ex: ChatOpenAI, ChatGoogleGenerativeAI, ou ChatOllama)
+  const llm = new ChatGoogleGenerativeAI({
+    apiKey: getGoogleApiKey(),
+    model: CHAT_MODEL,
+    temperature: 0,
+    maxRetries: 2,
+  });
   const structured = llm.withStructuredOutput(InsightsSchema, {
     name: "extract_lead_insights",
   });

@@ -3,6 +3,28 @@ import { ZodError } from 'zod';
 import { messageQueue } from '../queues/whatsappQueue';
 import { WhatsAppWebhookSchema } from '../schemas/whatsappSchema';
 import { updateMessageStatus } from '../services/messageStatusService';
+import { verifyMetaSignature } from '../utils/verifyMetaSignature';
+
+/**
+ * Valida no startup que as variáveis de ambiente necessárias ao webhook
+ * estão presentes. Deve ser chamada antes de app.listen() para falhar
+ * rápido em caso de configuração ausente.
+ */
+export function validateWebhookConfig(): void {
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+    if (!verifyToken || verifyToken.trim() === '') {
+        throw new Error(
+            '[Webhook] WHATSAPP_VERIFY_TOKEN não configurado. Configure no .env antes de subir o servidor.',
+        );
+    }
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appSecret || appSecret.trim() === '') {
+        throw new Error(
+            '[Webhook] META_APP_SECRET não configurado. Obtenha em developers.facebook.com/apps/{id}/settings/basic.',
+        );
+    }
+    console.log('[Webhook] Configuração validada com sucesso.');
+}
 
 export const verifyWebhook = (req: Request, res: Response) => {
     const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -22,6 +44,24 @@ export const verifyWebhook = (req: Request, res: Response) => {
 
 export const receiveMessage = async (req: Request, res: Response, _next: NextFunction) => {
     try {
+        const appSecret = process.env.META_APP_SECRET;
+        const isTestEnv = process.env.NODE_ENV === 'test';
+
+        if (!isTestEnv) {
+            if (!appSecret) {
+                console.error('[Webhook] META_APP_SECRET ausente; rejeitando requisição.');
+                res.status(500).send('EVENT_RECEIVED');
+                return;
+            }
+
+            const signatureHeader = req.header('x-hub-signature-256');
+            if (!verifyMetaSignature(req.rawBody, signatureHeader, appSecret)) {
+                console.warn('[Webhook] Assinatura HMAC inválida; requisição rejeitada.');
+                res.status(401).send('EVENT_RECEIVED');
+                return;
+            }
+        }
+
         const value = req.body?.entry?.[0]?.changes?.[0]?.value;
         if (value?.statuses) {
             console.log(`\x1b[35m--- RECIBO DE STATUS DA META ---\x1b[0m\n${JSON.stringify(value.statuses, null, 2)}`);
