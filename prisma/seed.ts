@@ -6,7 +6,7 @@ import {
   generateMessages,
   generateKnowledgeDocuments,
 } from './generators';
-import { demoUsers, demoProperties } from './demoData';
+import { demoUsers, demoProperties, demoPropertyImages } from './demoData';
 
 import prisma from '../src/config/db';
 
@@ -20,6 +20,7 @@ export async function main() {
   await prisma.rentalDocument.deleteMany().catch(() => {});
   await prisma.aiExtractedInsight.deleteMany().catch(() => {});
   await prisma.rentalProcess.deleteMany().catch(() => {});
+  await prisma.propertyImage.deleteMany();
   await prisma.property.deleteMany();
   await prisma.user.deleteMany();
   await prisma.knowledgeDocument.deleteMany();
@@ -42,6 +43,9 @@ export async function main() {
   const randomProperties = generateProperties(98, landlordIds);
   const properties = [...demoProperties, ...randomProperties];
   await prisma.property.createMany({ data: properties });
+
+  console.log('Inserting Property Images...');
+  await prisma.propertyImage.createMany({ data: demoPropertyImages });
 
   // 4. Generate and insert Chat Sessions
   console.log('Generating Chat Sessions...');
