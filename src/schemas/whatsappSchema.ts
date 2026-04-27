@@ -7,15 +7,27 @@ export const WhatsAppContactSchema = z.object({
     }).optional(),
 });
 
-export const WhatsAppTextMessageSchema = z.object({
-    from: z.string().min(1),
-    id: z.string().min(1),
-    timestamp: z.string().min(1),
-    type: z.literal('text'),
-    text: z.object({
-        body: z.string(),
-    }),
-});
+// Aceita qualquer tipo de mensagem que a Meta envie. O campo `text` continua
+// sendo o único que o bot processa hoje; para os demais tipos (image, audio,
+// sticker, location, unsupported…) o worker envia uma resposta padrão pedindo
+// texto. O schema passa a ser tolerante porque a Meta adiciona tipos novos
+// periodicamente — e um Zod rejeitando significa silêncio do bot.
+export const WhatsAppMessageSchema = z
+    .object({
+        from: z.string().min(1),
+        id: z.string().min(1),
+        timestamp: z.string().min(1),
+        type: z.string().min(1),
+        text: z
+            .object({
+                body: z.string(),
+            })
+            .optional(),
+    })
+    .passthrough();
+
+// Alias retrocompatível — arquivos que ainda importam o nome antigo continuam funcionando.
+export const WhatsAppTextMessageSchema = WhatsAppMessageSchema;
 
 export const WhatsAppStatusSchema = z.object({
     id: z.string().min(1),
@@ -31,7 +43,7 @@ export const WhatsAppChangeValueSchema = z.object({
         phone_number_id: z.string().optional(),
     }).optional(),
     contacts: z.array(WhatsAppContactSchema).optional(),
-    messages: z.array(WhatsAppTextMessageSchema).optional(),
+    messages: z.array(WhatsAppMessageSchema).optional(),
     statuses: z.array(WhatsAppStatusSchema).optional(),
 });
 

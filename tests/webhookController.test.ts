@@ -256,7 +256,10 @@ describe('WhatsAppWebhookSchema (Zod)', () => {
         expect(result.success).toBe(false);
     });
 
-    it('should reject message with wrong type field', () => {
+    it('should accept non-text message types (delegated to worker)', () => {
+        // Contrato novo: schema tolera image/audio/sticker/unsupported/etc;
+        // o worker detecta type !== 'text' e responde com NON_TEXT_REPLY.
+        // Rejeitar no Zod significava silêncio do bot para qualquer mídia.
         const result = WhatsAppWebhookSchema.safeParse({
             object: 'whatsapp_business_account',
             entry: [
@@ -271,7 +274,6 @@ describe('WhatsAppWebhookSchema (Zod)', () => {
                                         id: 'msg-id',
                                         timestamp: '1700000000',
                                         type: 'image',
-                                        text: { body: 'Hello' },
                                     },
                                 ],
                             },
@@ -281,7 +283,7 @@ describe('WhatsAppWebhookSchema (Zod)', () => {
             ],
         });
 
-        expect(result.success).toBe(false);
+        expect(result.success).toBe(true);
     });
 
     it('should accept payload with optional fields missing', () => {

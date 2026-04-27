@@ -298,6 +298,46 @@ describe('handleWhatsappMessage - empty / malformed payloads', () => {
         expect(deps.prismaMocks.userUpsert).not.toHaveBeenCalled();
         expect(deps.generateAnswerMock).not.toHaveBeenCalled();
     });
+
+    it('sends a default reply and returns early for non-text message types', async () => {
+        const deps = makeDeps();
+        const payload: WhatsAppWebhookPayload = {
+            object: 'whatsapp_business_account',
+            entry: [
+                {
+                    id: 'WHATSAPP_BUSINESS_ACCOUNT_ID',
+                    changes: [
+                        {
+                            value: {
+                                messaging_product: 'whatsapp',
+                                contacts: [{ wa_id: '5511999998888', profile: { name: 'Maria' } }],
+                                messages: [
+                                    {
+                                        from: '5511999998888',
+                                        id: 'wamid.NONTEXT1',
+                                        timestamp: '1700000000',
+                                        type: 'image',
+                                    },
+                                ],
+                            },
+                            field: 'messages',
+                        },
+                    ],
+                },
+            ],
+        } as unknown as WhatsAppWebhookPayload;
+
+        const result = await handleWhatsappMessage(payload, deps);
+
+        expect(result).toEqual({ success: true, reason: 'non_text_message' });
+        expect(deps.sendMessageMock).toHaveBeenCalledTimes(1);
+        expect(deps.sendMessageMock).toHaveBeenCalledWith(
+            '5511999998888',
+            expect.stringContaining('só consigo entender mensagens de texto'),
+        );
+        expect(deps.prismaMocks.userUpsert).not.toHaveBeenCalled();
+        expect(deps.generateAnswerMock).not.toHaveBeenCalled();
+    });
 });
 
 describe('handleWhatsappMessage - happy path (grounded answer)', () => {
