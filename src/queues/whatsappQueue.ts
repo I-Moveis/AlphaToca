@@ -6,10 +6,10 @@ if (!process.env.REDIS_URL) {
     throw new Error('[Queue] REDIS_URL não definida no ambiente. A fila não pode iniciar sem uma conexão Redis configurada.');
 }
 
-const connection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+export const queueRedisConnection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
 
 export const messageQueue = new Queue<WhatsAppWebhookPayload>('whatsapp-messages', {
-    connection,
+    connection: queueRedisConnection,
     defaultJobOptions: {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },

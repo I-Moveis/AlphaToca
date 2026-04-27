@@ -7,6 +7,9 @@ import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
 import visitRoutes from './routes/visitRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
+import prisma from './config/db';
+import { queueRedisConnection } from './queues/whatsappQueue';
+import { logger } from './config/logger';
 
 // Validate Auth0 configuration at startup
 validateAuthConfig();
@@ -22,9 +25,44 @@ app.use(
     }),
 );
 
-// Health Check Route
+// Liveness probe — processo está respondendo.
 app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Readiness probe — dependências críticas estão saudáveis.
+app.get('/health/ready', async (_req: Request, res: Response) => {
+    const checks: Record<'db' | 'redis' | 'gemini', 'ok' | 'fail'> = {
+        db: 'fail',
+        redis: 'fail',
+        gemini: 'fail',
+    };
+
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        checks.db = 'ok';
+    } catch (err) {
+        logger.error({ err }, '[health] db check failed');
+    }
+
+    try {
+        const pong = await queueRedisConnection.ping();
+        if (pong === 'PONG') checks.redis = 'ok';
+    } catch (err) {
+        logger.error({ err }, '[health] redis check failed');
+    }
+
+    // Gemini: só confirma presença da chave — não consome cota fazendo call real.
+    if (process.env.GOOGLE_API_KEY && process.env.GOOGLE_API_KEY.trim() !== '') {
+        checks.gemini = 'ok';
+    }
+
+    const allOk = Object.values(checks).every((v) => v === 'ok');
+    res.status(allOk ? 200 : 503).json({
+        status: allOk ? 'ready' : 'degraded',
+        checks,
+        timestamp: new Date().toISOString(),
+    });
 });
 
 // Protected routes middleware chain

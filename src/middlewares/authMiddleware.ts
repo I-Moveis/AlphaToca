@@ -2,6 +2,7 @@ import { auth } from 'express-oauth2-jwt-bearer';
 import { Request, Response, NextFunction } from 'express';
 import { Role } from '@prisma/client';
 import { userService } from '../services/userService';
+import { logger } from '../config/logger';
 
 /**
  * Validates that required Auth0 environment variables are set.
@@ -18,7 +19,7 @@ export const validateAuthConfig = (): void => {
     );
   }
 
-  console.log('[Auth] Auth0 configuration validated successfully.');
+  logger.info('[auth] Auth0 configuration validated successfully');
 };
 
 /**
@@ -56,7 +57,7 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
     (req as any).localUser = user;
     next();
   } catch (error) {
-    console.error('[AuthSync] Error syncing user:', error);
+    logger.error({ err: error }, '[auth-sync] error syncing user');
     next(error);
   }
 };

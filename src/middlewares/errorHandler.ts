@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { UnauthorizedError } from 'express-oauth2-jwt-bearer';
+import { logger } from '../config/logger';
 
 export type ErrorResponse = {
     status: number;
@@ -14,7 +15,10 @@ export const errorHandler = (
     res: Response,
     next: NextFunction
 ): void => {
-    console.error(`[Error Handler] ${err.name}: ${err.message}`);
+    logger.error(
+        { err, path: req.path, method: req.method },
+        `[error-handler] ${err.name}: ${err.message}`,
+    );
 
     let response: ErrorResponse = {
         status: 500,
