@@ -12,6 +12,9 @@ export const createPropertySchema = z.object({
   price: priceField,
   status: z.nativeEnum(PropertyStatus).optional().default(PropertyStatus.AVAILABLE),
   address: z.string().min(5),
+  city: z.string().optional(),
+  state: z.string().length(2).toUpperCase().optional(),
+  zipCode: z.string().optional(),
 });
 
 export const updatePropertySchema = z.object({
@@ -20,6 +23,9 @@ export const updatePropertySchema = z.object({
   price: priceField.optional(),
   status: z.nativeEnum(PropertyStatus).optional(),
   address: z.string().min(5).optional(),
+  city: z.string().optional(),
+  state: z.string().length(2).toUpperCase().optional(),
+  zipCode: z.string().optional(),
 });
 
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;

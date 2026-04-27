@@ -29,6 +29,9 @@ export const propertySearchSchema = z.object({
   nearSubway: stringToBoolean,
   isFeatured: stringToBoolean,
 
+  city: z.string().optional(),
+  state: z.string().length(2).toUpperCase().optional(),
+
   lat: stringToNumber,
   lng: stringToNumber,
   radius: stringToNumber,
