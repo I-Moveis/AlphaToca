@@ -97,6 +97,9 @@ model Property {
   price       Decimal        @db.Decimal(10, 2)
   status      PropertyStatus @default(AVAILABLE)
   address     String
+  city        String?
+  state       String?        @db.VarChar(2)
+  zipCode     String?        @map("zip_code")
 
   // Novos campos para busca e filtros
   type         PropertyType @default(APARTMENT)

@@ -15,6 +15,8 @@ export interface PropertySearchParams {
   petsAllowed?: boolean;
   nearSubway?: boolean;
   isFeatured?: boolean;
+  city?: string;
+  state?: string;
   lat?: number;
   lng?: number;
   radius?: number;
@@ -50,6 +52,8 @@ export const propertyService = {
       petsAllowed,
       nearSubway,
       isFeatured,
+      city,
+      state,
       lat,
       lng,
       radius,
@@ -86,6 +90,8 @@ export const propertyService = {
       ...(petsAllowed !== undefined && { petsAllowed }),
       ...(nearSubway !== undefined && { nearSubway }),
       ...(isFeatured !== undefined && { isFeatured }),
+      ...(city && { city: { equals: city, mode: 'insensitive' } }),
+      ...(state && { state: { equals: state, mode: 'insensitive' } }),
     };
 
     let sort: Prisma.PropertyOrderByWithRelationInput = { isFeatured: 'desc' };
@@ -102,6 +108,9 @@ export const propertyService = {
 
     if (hasLocation || finalOrderBy === 'nearest') {
       const radiusFilter = radius ? Prisma.sql`AND (6371 * acos(cos(radians(${lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians(${lng})) + sin(radians(${lat})) * sin(radians(latitude)))) <= ${radius}` : Prisma.empty;
+      
+      const cityFilter = city ? Prisma.sql`AND city ILIKE ${city}` : Prisma.empty;
+      const stateFilter = state ? Prisma.sql`AND state ILIKE ${state}` : Prisma.empty;
 
       const distanceSql = hasLocation
         ? Prisma.sql`(6371 * acos(cos(radians(${lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians(${lng})) + sin(radians(${lat})) * sin(radians(latitude))))`
@@ -120,12 +129,14 @@ export const propertyService = {
         FROM "properties"
         WHERE status = 'AVAILABLE'
         ${radiusFilter}
+        ${cityFilter}
+        ${stateFilter}
         ORDER BY ${orderBySql}
         LIMIT ${limit} OFFSET ${skip}
       `;
 
       const totalResult = await prisma.$queryRaw<any[]>`
-        SELECT COUNT(*) as count FROM "properties" WHERE status = 'AVAILABLE' ${radiusFilter}
+        SELECT COUNT(*) as count FROM "properties" WHERE status = 'AVAILABLE' ${radiusFilter} ${cityFilter} ${stateFilter}
       `;
       const total = Number(totalResult[0].count);
 
