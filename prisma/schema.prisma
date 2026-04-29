@@ -78,6 +78,7 @@ model User {
   name        String
   phoneNumber String   @unique @map("phone_number")
   role        Role     @default(TENANT)
+  fcmToken    String?  @map("fcm_token")
   createdAt   DateTime @default(now()) @map("created_at")
 
   // Relacionamentos inversos (Obrigações do Prisma)
