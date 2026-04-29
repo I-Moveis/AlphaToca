@@ -18,6 +18,7 @@ dist-ssr/
 *.crt
 *.p12
 *service-account*.json
+*firebase-adminsdk*.json
 credentials.json
 secrets.json
 

@@ -25,6 +25,39 @@ export const userController = {
     }
   },
 
+  /**
+   * PATCH /api/users/me/fcm-token
+   * Updates the authenticated user's FCM token.
+   */
+  async updateFcmToken(req: Request, res: Response, next: NextFunction) {
+    try {
+      const localUser = (req as any).localUser;
+
+      if (!localUser) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Authenticated user profile not found in database.' }]
+        });
+      }
+
+      const { fcmToken } = req.body;
+
+      if (!fcmToken || typeof fcmToken !== 'string') {
+        return res.status(400).json({
+          status: 400,
+          code: 'BAD_REQUEST',
+          messages: [{ message: 'fcmToken is required and must be a string.' }]
+        });
+      }
+
+      const updatedUser = await userService.updateUser(localUser.id, { fcmToken });
+      return res.status(200).json(updatedUser);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const users = await userService.getAllUsers();
