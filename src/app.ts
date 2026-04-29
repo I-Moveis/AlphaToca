@@ -7,6 +7,7 @@ import webhookRoutes from './routes/webhookRoutes';
 import propertyRoutes from './routes/propertyRoutes';
 import userRoutes from './routes/userRoutes';
 import visitRoutes from './routes/visitRoutes';
+import adminRoutes from './routes/adminRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 import prisma from './config/db';
 import { queueRedisConnection } from './queues/whatsappQueue';
@@ -87,6 +88,9 @@ app.use('/api', authStack, userRoutes);
 
 // Visit (booking) Routes
 app.use('/api', authStack, visitRoutes);
+
+// Admin Routes (metrics, moderation queue)
+app.use('/api', authStack, adminRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);

@@ -1,5 +1,5 @@
 import prisma from '../config/db';
-import { Property, PropertyStatus, Prisma } from '@prisma/client';
+import { ModerationStatus, Property, PropertyStatus, PropertyType, Prisma } from '@prisma/client';
 import { CreatePropertyInput, UpdatePropertyInput } from '../utils/propertyValidation';
 import { PropertySearchInput } from '../utils/searchValidation';
 
@@ -52,7 +52,7 @@ export const propertyService = {
     // Quando landlordId é informado, mostramos todos os status (dono vê seus imóveis).
     // Nas buscas públicas sem filtro de proprietário, restringe a AVAILABLE.
     const where: Prisma.PropertyWhereInput = {
-      ...(landlordId ? { landlordId } : { status: PropertyStatus.AVAILABLE }),
+      ...(landlordId ? { landlordId } : { status: PropertyStatus.AVAILABLE,moderationStatus: ModerationStatus.APPROVED  }),
       ...(type && { type }),
 
       ...((minPrice || maxPrice) && {
@@ -215,5 +215,56 @@ export const propertyService = {
     } catch (error) {
       return false;
     }
-  }
+  },
+
+  async moderateProperty(
+    id: string,
+    decision: ModerationStatus,
+    moderatorId: string,
+    reason?: string,
+  ): Promise<Property | null> {
+    const exists = await prisma.property.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) return null;
+
+    return prisma.property.update({
+      where: { id },
+      data: {
+        moderationStatus: decision,
+        moderationReason: reason ?? null,
+        moderatedAt: new Date(),
+        moderatedBy: moderatorId,
+      },
+    });
+  },
+
+  async listForModeration(params: { status?: ModerationStatus; page?: number; limit?: number }) {
+    const { status = ModerationStatus.PENDING, page = 1, limit = 20 } = params;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.PropertyWhereInput = { moderationStatus: status };
+
+    const [total, data] = await Promise.all([
+      prisma.property.count({ where }),
+      prisma.property.findMany({
+        where,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+        include: {
+          landlord: { select: { id: true, name: true, phoneNumber: true } },
+          images: { where: { isCover: true }, take: 1 },
+        },
+      }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  },
 };
