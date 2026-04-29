@@ -1,29 +1,12 @@
 import prisma from '../config/db';
 import { ModerationStatus, Property, PropertyStatus, PropertyType, Prisma } from '@prisma/client';
 import { CreatePropertyInput, UpdatePropertyInput } from '../utils/propertyValidation';
+import { PropertySearchInput } from '../utils/searchValidation';
 
-export interface PropertySearchParams {
-  type?: PropertyType;
-  minPrice?: number;
-  maxPrice?: number;
-  minBedrooms?: number;
-  minBathrooms?: number;
-  minParkingSpots?: number;
-  minArea?: number;
-  maxArea?: number;
-  isFurnished?: boolean;
-  petsAllowed?: boolean;
-  nearSubway?: boolean;
-  isFeatured?: boolean;
-  city?: string;
-  state?: string;
-  lat?: number;
-  lng?: number;
-  radius?: number;
-  orderBy?: 'createdAt' | 'views' | 'priceAsc' | 'priceDesc' | 'isFeatured' | 'nearest';
-  page?: number;
-  limit?: number;
-}
+// Re-exportado para compatibilidade com código anterior que importe diretamente deste módulo
+export type PropertySearchParams = PropertySearchInput;
+
+
 
 export const propertyService = {
   async createProperty(data: CreatePropertyInput): Promise<Property> {
@@ -38,7 +21,7 @@ export const propertyService = {
     });
   },
 
-  async searchProperties(params: PropertySearchParams) {
+  async searchProperties(params: PropertySearchInput) {
     const {
       type,
       minPrice,
@@ -54,6 +37,8 @@ export const propertyService = {
       isFeatured,
       city,
       state,
+      landlordId,
+      tenantId,
       lat,
       lng,
       radius,
@@ -64,9 +49,10 @@ export const propertyService = {
 
     const skip = (page - 1) * limit;
 
+    // Quando landlordId é informado, mostramos todos os status (dono vê seus imóveis).
+    // Nas buscas públicas sem filtro de proprietário, restringe a AVAILABLE.
     const where: Prisma.PropertyWhereInput = {
-      status: PropertyStatus.AVAILABLE,
-      moderationStatus: ModerationStatus.APPROVED,
+      ...(landlordId ? { landlordId } : { status: PropertyStatus.AVAILABLE,moderationStatus: ModerationStatus.APPROVED  }),
       ...(type && { type }),
 
       ...((minPrice || maxPrice) && {
@@ -93,6 +79,13 @@ export const propertyService = {
       ...(isFeatured !== undefined && { isFeatured }),
       ...(city && { city: { equals: city, mode: 'insensitive' } }),
       ...(state && { state: { equals: state, mode: 'insensitive' } }),
+      // Filtros de proprietário/inquilino (§1 BACKEND_GAPS)
+      // tenantId é aplicado via visitas (filtragem no join) — ver nota abaixo
+      ...(tenantId && {
+        visits: {
+          some: { tenantId }
+        }
+      }),
     };
 
     let sort: Prisma.PropertyOrderByWithRelationInput = { isFeatured: 'desc' };
@@ -109,9 +102,16 @@ export const propertyService = {
 
     if (hasLocation || finalOrderBy === 'nearest') {
       const radiusFilter = radius ? Prisma.sql`AND (6371 * acos(cos(radians(${lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians(${lng})) + sin(radians(${lat})) * sin(radians(latitude)))) <= ${radius}` : Prisma.empty;
-      
+
       const cityFilter = city ? Prisma.sql`AND city ILIKE ${city}` : Prisma.empty;
       const stateFilter = state ? Prisma.sql`AND state ILIKE ${state}` : Prisma.empty;
+
+      // Filtros de proprietário/inquilino no caminho raw SQL
+      const landlordFilter = landlordId ? Prisma.sql`AND landlord_id = ${landlordId}::uuid` : Prisma.empty;
+      const statusFilter = landlordId ? Prisma.empty : Prisma.sql`AND status = 'AVAILABLE'`;
+      const tenantFilter = tenantId
+        ? Prisma.sql`AND id IN (SELECT property_id FROM visits WHERE tenant_id = ${tenantId}::uuid)`
+        : Prisma.empty;
 
       const distanceSql = hasLocation
         ? Prisma.sql`(6371 * acos(cos(radians(${lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians(${lng})) + sin(radians(${lat})) * sin(radians(latitude))))`
@@ -128,16 +128,26 @@ export const propertyService = {
       const properties = await prisma.$queryRaw<any[]>`
         SELECT *, ${distanceSql} as distance
         FROM "properties"
-        WHERE status = 'AVAILABLE' AND moderation_status = 'APPROVED'
+        WHERE 1=1
+        ${statusFilter}
         ${radiusFilter}
         ${cityFilter}
         ${stateFilter}
+        ${landlordFilter}
+        ${tenantFilter}
         ORDER BY ${orderBySql}
         LIMIT ${limit} OFFSET ${skip}
       `;
 
       const totalResult = await prisma.$queryRaw<any[]>`
-        SELECT COUNT(*) as count FROM "properties" WHERE status = 'AVAILABLE' AND moderation_status = 'APPROVED' ${radiusFilter} ${cityFilter} ${stateFilter}
+        SELECT COUNT(*) as count FROM "properties"
+        WHERE 1=1
+        ${statusFilter}
+        ${radiusFilter}
+        ${cityFilter}
+        ${stateFilter}
+        ${landlordFilter}
+        ${tenantFilter}
       `;
       const total = Number(totalResult[0].count);
 

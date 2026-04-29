@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
+import path from 'path';
 import cors from 'cors';
 import { errorHandler } from './middlewares/errorHandler';
 import webhookRoutes from './routes/webhookRoutes';
@@ -31,6 +32,9 @@ app.use(
         },
     }),
 );
+
+// Serve static files from the 'uploads' directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Liveness probe — processo está respondendo.
 app.get('/health', (req: Request, res: Response) => {
