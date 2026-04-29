@@ -138,6 +138,18 @@ router.get('/properties', propertyController.list);
  *         schema:
  *           type: boolean
  *       - in: query
+ *         name: landlordId
+ *         description: Filtra imóveis por locador (UUID). Exibe todos os status do proprietário.
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: tenantId
+ *         description: Filtra imóveis nos quais o inquilino tem visita agendada (UUID).
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
  *         name: orderBy
  *         schema:
  *           type: string

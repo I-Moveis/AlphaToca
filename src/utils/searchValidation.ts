@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { PropertyType } from '@prisma/client';
+
+// Enum local para evitar dep\u00eandencia do Prisma client gerado (pode estar desatualizado)
+// Mant\u00e9m sync com prisma/schema.prisma
+const PropertyType = z.enum(['APARTMENT', 'HOUSE', 'STUDIO', 'CONDO_HOUSE']);
 
 // Helper para converter texto da URL em número
 const stringToNumber = z.string().optional().transform((val) => {
@@ -16,7 +19,7 @@ const stringToBoolean = z.string().optional().transform((val) => {
 });
 
 export const propertySearchSchema = z.object({
-  type: z.nativeEnum(PropertyType).optional(),
+  type: PropertyType.optional(),
   minPrice: stringToNumber,
   maxPrice: stringToNumber,
   minBedrooms: stringToNumber,
@@ -31,6 +34,10 @@ export const propertySearchSchema = z.object({
 
   city: z.string().optional(),
   state: z.string().length(2).toUpperCase().optional(),
+
+  // Filtros de proprietário/inquilino — desbloqueiam a tela "Meus Imóveis" (§1 BACKEND_GAPS)
+  landlordId: z.string().uuid().optional(),
+  tenantId: z.string().uuid().optional(),
 
   lat: stringToNumber,
   lng: stringToNumber,
