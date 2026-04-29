@@ -7,6 +7,8 @@ import type {
   AvailabilityQuery,
 } from '../utils/visitValidation';
 import { MAX_VISIT_DURATION_MINUTES } from '../config/visits';
+import { pushNotificationService } from './pushNotificationService';
+import { logger } from '../config/logger';
 
 export type VisitErrorCode = 'PROPERTY_NOT_FOUND' | 'CONFLICT' | 'VISIT_NOT_FOUND';
 
@@ -98,12 +100,18 @@ export async function createVisit(
 ): Promise<Visit> {
   const property = await deps.prisma.property.findUnique({
     where: { id: input.propertyId },
-    select: { id: true, landlordId: true } as any,
+    select: {
+      id: true,
+      landlordId: true,
+      title: true,
+      landlord: {
+        select: { fcmToken: true }
+      }
+    } as any,
   });
   if (!property) {
     throw new VisitError('PROPERTY_NOT_FOUND', 404, { propertyId: input.propertyId });
   }
-  // const landlordId = (property as { landlordId: string }).landlordId;
   const landlordId = (property as unknown as { landlordId: string }).landlordId;
 
   const conflict = await findConflicting(
@@ -119,7 +127,7 @@ export async function createVisit(
     throw new VisitError('CONFLICT', 409, { conflictWith: conflict.id });
   }
 
-  return deps.prisma.visit.create({
+  const visit = await deps.prisma.visit.create({
     data: {
       propertyId: input.propertyId,
       tenantId: input.tenantId,
@@ -130,6 +138,28 @@ export async function createVisit(
       notes: input.notes ?? null,
     },
   });
+
+  // Gatilho Isolado: Dispara notificação push para o locador se ele tiver um fcmToken
+  const fcmToken = (property as any).landlord?.fcmToken;
+  const propertyTitle = (property as any).title;
+
+  if (fcmToken) {
+    // Não foi usado await para não travar a resposta da API caso o Firebase demore
+    pushNotificationService.sendPushNotification({
+      token: fcmToken,
+      title: 'Nova Visita Agendada!',
+      body: `Uma visita foi agendada para o seu imóvel: ${propertyTitle}`,
+      data: {
+        visitId: visit.id,
+        propertyId: input.propertyId,
+        type: 'VISIT_SCHEDULED'
+      }
+    }).catch(err => {
+      logger.error({ err, visitId: visit.id }, '[visitService] Falha ao disparar push notification de nova visita');
+    });
+  }
+
+  return visit;
 }
 
 export async function getVisitById(
