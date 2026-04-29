@@ -24,6 +24,12 @@ enum PropertyStatus {
   RENTED
 }
 
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum ChatStatus {
   ACTIVE_BOT
   WAITING_HUMAN
@@ -93,11 +99,15 @@ model User {
 model Property {
   id          String         @id @default(uuid())
   landlordId  String         @map("landlord_id")
-  title       String
-  description String
-  price       Decimal        @db.Decimal(10, 2)
-  status      PropertyStatus @default(AVAILABLE)
-  address     String
+  title            String
+  description      String
+  price            Decimal          @db.Decimal(10, 2)
+  status           PropertyStatus   @default(AVAILABLE)
+  moderationStatus ModerationStatus @default(PENDING) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt      DateTime?        @map("moderated_at")
+  moderatedBy      String?          @map("moderated_by")
+  address          String
   city        String?
   state       String?        @db.VarChar(2)
   zipCode     String?        @map("zip_code")
@@ -125,6 +135,7 @@ model Property {
   images          PropertyImage[]
   visits          Visit[]
 
+  @@index([moderationStatus], name: "properties_moderation_status_idx")
   @@map("properties")
 }
 

@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { propertyService } from '../services/propertyService';
-import { createPropertySchema, updatePropertySchema } from '../utils/propertyValidation';
+import {
+  createPropertySchema,
+  moderatePropertySchema,
+  updatePropertySchema,
+} from '../utils/propertyValidation';
 import { propertySearchSchema } from '../utils/searchValidation';
 
 export const propertyController = {
@@ -89,5 +93,34 @@ export const propertyController = {
     } catch (error) {
       next(error);
     }
-  }
+  },
+
+  async moderate(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const moderator = req.localUser;
+      if (!moderator) {
+        return res.status(401).json({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          messages: [{ message: 'Moderator profile not found on request.' }],
+        });
+      }
+
+      const { decision, reason } = moderatePropertySchema.parse(req.body);
+      const property = await propertyService.moderateProperty(id, decision, moderator.id, reason);
+
+      if (!property) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Property not found' }],
+        });
+      }
+
+      return res.status(200).json(property);
+    } catch (error) {
+      next(error);
+    }
+  },
 };

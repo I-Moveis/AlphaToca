@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { propertyController } from '../controllers/propertyController';
+import {
+  authSyncMiddleware,
+  checkJwt,
+  requireRole,
+} from '../middlewares/authMiddleware';
 
 const router = Router();
+
+const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
 
 /**
  * @swagger
@@ -194,6 +201,49 @@ router.get('/properties', propertyController.list);
  *         description: Erro interno do servidor
  */
 router.get('/properties/search', propertyController.search);
+
+/**
+ * @swagger
+ * /properties/{id}/moderation:
+ *   put:
+ *     summary: Aprovar ou rejeitar um anúncio (somente ADMIN)
+ *     tags: [Propriedades, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [decision]
+ *             properties:
+ *               decision:
+ *                 type: string
+ *                 enum: [APPROVED, REJECTED]
+ *               reason:
+ *                 type: string
+ *                 description: Obrigatório quando decision=REJECTED
+ *     responses:
+ *       200:
+ *         description: Status de moderação atualizado
+ *       400:
+ *         description: Payload inválido
+ *       401:
+ *         description: Token ausente ou inválido
+ *       403:
+ *         description: Usuário sem role ADMIN
+ *       404:
+ *         description: Propriedade não encontrada
+ */
+router.put('/properties/:id/moderation', ...adminAuthStack, propertyController.moderate);
 
 /**
  * @swagger

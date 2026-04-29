@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PropertyStatus, Prisma } from '@prisma/client';
+import { ModerationStatus, PropertyStatus, Prisma } from '@prisma/client';
 
 const priceField = z.string()
   .regex(/^\d+(\.\d{1,2})?$/, "Price must be a positive number with at most 2 decimal places")
@@ -28,5 +28,18 @@ export const updatePropertySchema = z.object({
   zipCode: z.string().optional(),
 });
 
+// Somente APPROVED ou REJECTED são decisões válidas — PENDING é default no insert
+// e não faz sentido como alvo de moderação (reverteria o status para "não avaliado").
+export const moderatePropertySchema = z
+  .object({
+    decision: z.enum([ModerationStatus.APPROVED, ModerationStatus.REJECTED]),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .refine((val) => val.decision !== ModerationStatus.REJECTED || !!val.reason, {
+    message: 'reason is required when decision is REJECTED',
+    path: ['reason'],
+  });
+
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
 export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
+export type ModeratePropertyInput = z.infer<typeof moderatePropertySchema>;
