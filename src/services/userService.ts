@@ -26,7 +26,7 @@ export const userService = {
     });
   },
 
-  async updateUser(id: string, data: Partial<{ name: string; phoneNumber: string; role: Role }>): Promise<User | null> {
+  async updateUser(id: string, data: Partial<{ name: string; phoneNumber: string; role: Role; fcmToken: string }>): Promise<User | null> {
     try {
       return await prisma.user.update({
         where: { id },
