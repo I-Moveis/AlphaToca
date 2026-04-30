@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 
 export const UserSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email format"),
   phoneNumber: z.string().regex(/^\+?[1-9]\d{1,14}$/, "Invalid phone number format"),
   role: z.nativeEnum(Role).default(Role.TENANT),
   fcmToken: z.string().optional(),
