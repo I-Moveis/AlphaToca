@@ -82,6 +82,7 @@ model User {
   id          String   @id @default(uuid())
   auth0Sub    String?  @unique @map("auth0_sub")
   name        String
+  email       String?  @unique
   phoneNumber String   @unique @map("phone_number")
   role        Role     @default(TENANT)
   fcmToken    String?  @map("fcm_token")

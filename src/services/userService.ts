@@ -20,13 +20,13 @@ export const userService = {
     });
   },
 
-  async createUser(data: { name: string; phoneNumber: string; role: Role }): Promise<User> {
+  async createUser(data: { name: string; email: string; phoneNumber: string; role: Role }): Promise<User> {
     return await prisma.user.create({
       data
     });
   },
 
-  async updateUser(id: string, data: Partial<{ name: string; phoneNumber: string; role: Role; fcmToken: string }>): Promise<User | null> {
+  async updateUser(id: string, data: Partial<{ name: string; email: string; phoneNumber: string; role: Role; fcmToken: string }>): Promise<User | null> {
     try {
       return await prisma.user.update({
         where: { id },
@@ -63,6 +63,7 @@ export const userService = {
     }
 
     const name = (auth0Payload.name as string) || 'Unknown';
+    const email = auth0Payload.email as string | undefined;
     const phoneNumber = auth0Payload.phone_number as string | undefined;
     const rolesClaim = auth0Payload['https://alphatoca.com/roles'];
     const roles = Array.isArray(rolesClaim)
@@ -85,12 +86,14 @@ export const userService = {
       where: { auth0Sub: sub },
       update: {
         name,
+        ...(email && { email }),
         ...(phoneNumber && { phoneNumber }),
         ...(mappedRole && { role: mappedRole })
       },
       create: {
         auth0Sub: sub,
         name,
+        email,
         phoneNumber: phoneNumber || placeholderPhone,
         role: mappedRole ?? 'TENANT'
       }
