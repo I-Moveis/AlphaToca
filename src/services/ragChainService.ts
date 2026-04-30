@@ -1,4 +1,3 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   AIMessage,
   HumanMessage,
@@ -8,7 +7,8 @@ import {
 import type { PrismaClient } from "@prisma/client";
 
 import prisma from "../config/db";
-import { CHAT_MODEL, SIMILARITY_THRESHOLD, getGoogleApiKey } from "../config/rag";
+import { SIMILARITY_THRESHOLD } from "../config/rag";
+import { getChatModel, type ChatLLM } from "../config/aiProvider";
 import {
   retrieveRelevantChunks,
   type RetrievedChunk,
@@ -26,9 +26,7 @@ export interface GenerateAnswerResult {
   usedChunkIds: string[];
 }
 
-export interface ChatLLM {
-  invoke(messages: BaseMessage[]): Promise<{ content: unknown }>;
-}
+export type { ChatLLM };
 
 export interface Retriever {
   retrieve(query: string): Promise<RetrievedChunk[]>;
@@ -123,21 +121,12 @@ let defaultDepsCache: ChainDeps | null = null;
 
 function getDefaultDeps(): ChainDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  const apiKey = getGoogleApiKey();
-  const llm = new ChatGoogleGenerativeAI({
-    apiKey,
-    model: CHAT_MODEL,
-    temperature: 0.2,
-    maxRetries: 2,
-  });
   defaultDepsCache = {
     prisma,
     retriever: {
       retrieve: (query) => retrieveRelevantChunks(query),
     },
-    llm: {
-      invoke: (messages) => llm.invoke(messages) as Promise<{ content: unknown }>,
-    },
+    llm: getChatModel(),
   };
   return defaultDepsCache;
 }

@@ -1,4 +1,3 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   HumanMessage,
   SystemMessage,
@@ -8,7 +7,10 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "../config/db";
-import { CHAT_MODEL, getGoogleApiKey } from "../config/rag";
+import {
+  getStructuredChatModel,
+  type StructuredLLM,
+} from "../config/aiProvider";
 
 export const INTENT_VALUES = [
   "search",
@@ -41,9 +43,7 @@ export interface ExtractInsightsResult {
   handoff: boolean;
 }
 
-export interface StructuredLLM {
-  extract(messages: BaseMessage[]): Promise<ExtractedInsights>;
-}
+export type { StructuredLLM };
 
 export type PrismaExtractionClient = Pick<
   PrismaClient,
@@ -52,7 +52,7 @@ export type PrismaExtractionClient = Pick<
 
 export interface ExtractionDeps {
   prisma: PrismaExtractionClient;
-  llm: StructuredLLM;
+  llm: StructuredLLM<ExtractedInsights>;
 }
 
 const SYSTEM_PROMPT = [
@@ -99,21 +99,9 @@ let defaultDepsCache: ExtractionDeps | null = null;
 
 function getDefaultDeps(): ExtractionDeps {
   if (defaultDepsCache) return defaultDepsCache;
-  const llm = new ChatGoogleGenerativeAI({
-    apiKey: getGoogleApiKey(),
-    model: CHAT_MODEL,
-    temperature: 0,
-    maxRetries: 2,
-  });
-  const structured = llm.withStructuredOutput(InsightsSchema, {
-    name: "extract_lead_insights",
-  });
   defaultDepsCache = {
     prisma,
-    llm: {
-      extract: (messages) =>
-        structured.invoke(messages) as Promise<ExtractedInsights>,
-    },
+    llm: getStructuredChatModel(InsightsSchema, "extract_lead_insights"),
   };
   return defaultDepsCache;
 }
