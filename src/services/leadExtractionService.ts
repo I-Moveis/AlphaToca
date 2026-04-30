@@ -56,7 +56,7 @@ export interface ExtractionDeps {
 }
 
 const SYSTEM_PROMPT = [
-  "Você é um extrator estruturado de informações do AlphaToca (aluguel de imóveis no Brasil).",
+  "Você é um extrator estruturado de informações do I-Moveis (aluguel de imóveis no Brasil).",
   "",
   "Sua função é ler a mensagem do inquilino e extrair, quando presentes, as seguintes informações:",
   "- budget: orçamento mensal mencionado (ex: 'R$ 2.000', 'até 2500'). Mantenha o texto como apareceu.",

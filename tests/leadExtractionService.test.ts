@@ -230,7 +230,7 @@ describe("buildExtractionMessages", () => {
     expect(msgs[1]).toBeInstanceOf(HumanMessage);
     const sys = msgs[0] as SystemMessage;
     expect(typeof sys.content === "string").toBe(true);
-    expect(sys.content as string).toContain("AlphaToca");
+    expect(sys.content as string).toContain("I-Moveis");
     expect(sys.content as string).toContain("intent");
   });
 });
