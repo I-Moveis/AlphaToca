@@ -111,7 +111,7 @@ describe("buildSystemPrompt", () => {
   it("inlines context into the prompt", () => {
     const prompt = buildSystemPrompt("SOME CONTEXT");
     expect(prompt).toContain("SOME CONTEXT");
-    expect(prompt).toContain("AlphaToca");
+    expect(prompt).toContain("I-Moveis");
     expect(prompt).toContain("português");
   });
 
@@ -325,5 +325,124 @@ describe("generateAnswer", () => {
     );
     expect(result.handoff).toBe(false);
     expect(deps.llm.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate the user message when it is already the last history entry (worker flow)", async () => {
+    const highScore = SIMILARITY_THRESHOLD + 0.1;
+    const userMessage = "tem apartamentos";
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: highScore }],
+      history: [
+        { senderType: "TENANT", content: "oi" },
+        { senderType: "BOT", content: "olá!" },
+        { senderType: "TENANT", content: userMessage },
+      ],
+    });
+
+    await generateAnswer({ sessionId: "s1", userMessage }, deps);
+
+    const prompt = deps.llmCalls[0];
+    // System + 3 history (not duplicated) = 4
+    expect(prompt).toHaveLength(4);
+    const humanContents = prompt
+      .filter((m): m is HumanMessage => m instanceof HumanMessage)
+      .map((m) => m.content as string);
+    const occurrences = humanContents.filter((c) => c === userMessage).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it("appends the user message when it is not in history (evalRag/test flow)", async () => {
+    const highScore = SIMILARITY_THRESHOLD + 0.1;
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: highScore }],
+      history: [{ senderType: "BOT", content: "olá, posso ajudar?" }],
+    });
+
+    await generateAnswer(
+      { sessionId: "s1", userMessage: "quero alugar" },
+      deps,
+    );
+
+    const prompt = deps.llmCalls[0];
+    expect(prompt).toHaveLength(3);
+    expect(prompt[2]).toBeInstanceOf(HumanMessage);
+    expect((prompt[2] as HumanMessage).content).toBe("quero alugar");
+  });
+
+  it("appends when last history entry matches content but is from LANDLORD (not TENANT)", async () => {
+    const highScore = SIMILARITY_THRESHOLD + 0.1;
+    const userMessage = "tem apartamentos";
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: highScore }],
+      history: [{ senderType: "LANDLORD", content: userMessage }],
+    });
+
+    await generateAnswer({ sessionId: "s1", userMessage }, deps);
+
+    const prompt = deps.llmCalls[0];
+    // System + 1 landlord (prefixed) + current user = 3
+    expect(prompt).toHaveLength(3);
+    const last = prompt[prompt.length - 1] as HumanMessage;
+    expect(last.content).toBe(userMessage);
+  });
+
+  it("runs retriever and history fetch in parallel", async () => {
+    const highScore = SIMILARITY_THRESHOLD + 0.1;
+    let retrieverResolve: (v: FakeChunk[]) => void = () => {};
+    let historyResolve: (v: FakeStoredMessage[]) => void = () => {};
+    const retrieverPromise = new Promise<FakeChunk[]>((r) => {
+      retrieverResolve = r;
+    });
+    const historyPromise = new Promise<FakeStoredMessage[]>((r) => {
+      historyResolve = r;
+    });
+
+    const deps: ChainDeps = {
+      prisma: {
+        message: {
+          findMany: vi.fn(() => historyPromise),
+        },
+      } as unknown as ChainDeps["prisma"],
+      retriever: { retrieve: vi.fn(() => retrieverPromise) },
+      llm: {
+        invoke: vi.fn(async () => ({ content: "ok" })),
+      },
+    };
+
+    const resultPromise = generateAnswer(
+      { sessionId: "s1", userMessage: "q" },
+      deps,
+    );
+
+    // Both should have started before either resolves.
+    await new Promise((r) => setImmediate(r));
+    expect(deps.retriever.retrieve).toHaveBeenCalledTimes(1);
+    expect(deps.prisma.message.findMany).toHaveBeenCalledTimes(1);
+
+    retrieverResolve([
+      { id: "c1", title: "t", content: "c", score: highScore },
+    ]);
+    historyResolve([]);
+    await resultPromise;
+  });
+
+  it("times out the LLM invoke and propagates the error (caught by worker fallback)", async () => {
+    const highScore = SIMILARITY_THRESHOLD + 0.1;
+    const deps = makeDeps({
+      chunks: [{ id: "c1", title: "T", content: "b", score: highScore }],
+    });
+    // Override the invoke to simulate a hung call.
+    deps.llm.invoke = vi.fn(() => new Promise(() => {}));
+
+    const prev = process.env.RAG_LLM_TIMEOUT_MS;
+    process.env.RAG_LLM_TIMEOUT_MS = "20";
+    try {
+      await expect(
+        generateAnswer({ sessionId: "s1", userMessage: "q" }, deps),
+      ).rejects.toThrow(/LLM invoke timeout after 20ms/);
+    } finally {
+      if (prev === undefined) delete process.env.RAG_LLM_TIMEOUT_MS;
+      else process.env.RAG_LLM_TIMEOUT_MS = prev;
+    }
   });
 });
