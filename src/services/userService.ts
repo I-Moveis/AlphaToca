@@ -14,9 +14,9 @@ export const userService = {
     });
   },
 
-  async getUserByAuth0Sub(auth0Sub: string): Promise<User | null> {
+  async getUserByFirebaseUid(firebaseUid: string): Promise<User | null> {
     return await prisma.user.findUnique({
-      where: { auth0Sub }
+      where: { firebaseUid }
     });
   },
 
@@ -49,28 +49,28 @@ export const userService = {
   },
 
   /**
-   * Upsert a user from Auth0 JWT payload.
-   * Uses auth0Sub (the "sub" claim) as the unique identifier for sync.
+   * Upsert a user from Firebase Auth JWT payload.
+   * Uses firebaseUid (the "uid" claim) as the unique identifier for sync.
    * If the user doesn't exist, creates a new one with a UUID id.
-   * If the user exists, updates their profile data — but only updates role
-   * when the token actually carries a roles claim, to avoid downgrading an
-   * existing user on a token that lacks the custom claim.
    */
-  async upsertUserFromAuth0(auth0Payload: Record<string, unknown>): Promise<User> {
-    const sub = auth0Payload.sub;
-    if (typeof sub !== 'string' || sub.length === 0) {
-      throw new Error('Auth0 payload is missing the "sub" claim.');
+  async upsertUserFromFirebase(firebasePayload: any): Promise<User> {
+    const uid = firebasePayload.uid;
+    if (typeof uid !== 'string' || uid.length === 0) {
+      throw new Error('Firebase payload is missing the "uid" claim.');
     }
 
-    const name = (auth0Payload.name as string) || 'Unknown';
-    const email = auth0Payload.email as string | undefined;
-    const phoneNumber = auth0Payload.phone_number as string | undefined;
-    const rolesClaim = auth0Payload['https://alphatoca.com/roles'];
-    const roles = Array.isArray(rolesClaim)
+    // Attempt to extract name from payload or email
+    const name = (firebasePayload.name as string) || (firebasePayload.email ? firebasePayload.email.split('@')[0] : 'Unknown');
+    const email = firebasePayload.email as string | undefined;
+    const phoneNumber = firebasePayload.phone_number as string | undefined;
+    
+    // Custom claims in Firebase are usually accessed directly from the payload.
+    // If you plan to set 'role' via custom claims, we can read it here.
+    const rolesClaim = firebasePayload.roles || firebasePayload.role;
+    const roles = Array.isArray(rolesClaim) 
       ? rolesClaim.map((r) => String(r).toUpperCase())
-      : null;
+      : typeof rolesClaim === 'string' ? [rolesClaim.toUpperCase()] : null;
 
-    // Map Auth0 roles to our enum. Only derive a role when the claim is present.
     let mappedRole: Role | undefined;
     if (roles) {
       if (roles.includes('ADMIN')) mappedRole = 'ADMIN';
@@ -79,11 +79,11 @@ export const userService = {
     }
 
     // phoneNumber is @unique in the schema, so a shared "pending" placeholder
-    // would collide for the second user without a phone claim. Scope it per sub.
-    const placeholderPhone = `pending:${sub}`;
+    // would collide for the second user without a phone claim. Scope it per uid.
+    const placeholderPhone = `pending:${uid}`;
 
     return await prisma.user.upsert({
-      where: { auth0Sub: sub },
+      where: { firebaseUid: uid },
       update: {
         name,
         ...(email && { email }),
@@ -91,7 +91,7 @@ export const userService = {
         ...(mappedRole && { role: mappedRole })
       },
       create: {
-        auth0Sub: sub,
+        firebaseUid: uid,
         name,
         email,
         phoneNumber: phoneNumber || placeholderPhone,
