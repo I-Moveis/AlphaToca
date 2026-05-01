@@ -80,7 +80,7 @@ enum MessageStatus {
 
 model User {
   id          String   @id @default(uuid())
-  auth0Sub    String?  @unique @map("auth0_sub")
+  firebaseUid String?  @unique @map("firebase_uid")
   name        String
   email       String?  @unique
   phoneNumber String   @unique @map("phone_number")

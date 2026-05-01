@@ -1,47 +1,65 @@
-import { auth } from 'express-oauth2-jwt-bearer';
 import { Request, Response, NextFunction } from 'express';
 import { Role } from '@prisma/client';
 import { userService } from '../services/userService';
 import { logger } from '../config/logger';
+import admin from '../config/firebase';
 
 /**
- * Validates that required Auth0 environment variables are set.
+ * Validates that required Firebase environment variables are set.
  * Should be called at application startup.
  */
 export const validateAuthConfig = (): void => {
-  const required = ['AUTH0_AUDIENCE', 'AUTH0_ISSUER_BASE_URL'];
+  const required = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
   const missing = required.filter((key) => !process.env[key]);
 
   if (missing.length > 0) {
     throw new Error(
-      `[Auth] Missing required Auth0 environment variables: ${missing.join(', ')}. ` +
+      `[Auth] Missing required Firebase environment variables: ${missing.join(', ')}. ` +
       `Check your .env file.`
     );
   }
 
-  logger.info('[auth] Auth0 configuration validated successfully');
+  logger.info('[auth] Firebase Auth configuration validated successfully');
 };
 
 /**
- * Authorization middleware. When used, the Access Token must
- * exist and be verified against the Auth0 JSON Web Key Set.
+ * Authorization middleware using Firebase Admin SDK.
+ * Expects 'Authorization: Bearer <token>' in the request headers.
  */
-export const checkJwt = auth({
-  audience: process.env.AUTH0_AUDIENCE,
-  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
-  tokenSigningAlg: 'RS256'
-});
+export const checkJwt = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+       return res.status(401).json({
+         status: 401,
+         code: 'UNAUTHORIZED',
+         messages: [{ message: 'Missing or invalid Authorization header.' }]
+       });
+    }
+
+    const token = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    
+    // Attach the decoded token to the request for the next middleware
+    (req as any).auth = { payload: decodedToken };
+    next();
+  } catch (error) {
+    logger.error({ err: error }, '[auth] token verification failed');
+    return res.status(401).json({
+      status: 401,
+      code: 'UNAUTHORIZED',
+      messages: [{ message: 'Invalid token.' }]
+    });
+  }
+};
 
 /**
- * Middleware to synchronize user data from Auth0 to our local database.
+ * Middleware to synchronize user data from Firebase to our local database.
  * Must be used after checkJwt. Attaches the local user to req.localUser.
- *
- * If sync fails, the request is rejected (we cannot authorize without a
- * corresponding local user record).
  */
 export const authSyncMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const authData = req.auth;
+    const authData = (req as any).auth;
 
     if (!authData?.payload) {
       return res.status(401).json({
@@ -51,8 +69,8 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
       });
     }
 
-    const user = await userService.upsertUserFromAuth0(
-      authData.payload as Record<string, unknown>
+    const user = await userService.upsertUserFromFirebase(
+      authData.payload as admin.auth.DecodedIdToken
     );
     (req as any).localUser = user;
     next();
@@ -65,9 +83,6 @@ export const authSyncMiddleware = async (req: Request, res: Response, next: Next
 /**
  * Middleware factory to enforce role-based access control.
  * Must be used after authSyncMiddleware (which attaches localUser).
- *
- * @example
- *   router.delete('/users/:id', requireRole('ADMIN'), userController.delete);
  */
 export const requireRole = (...allowedRoles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
