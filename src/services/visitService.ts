@@ -249,7 +249,7 @@ export async function updateVisit(
       fcmToken: tenant?.fcmToken,
       type: 'VISIT_COMPLETED',
       title: 'Como foi a visita?',
-      body: `Você visitou o imóvel "${property?.title}". Gostou? Faça sua proposta!`,
+      body: `Você visitou o imóvel "${property?.title}". Continue o processo de locação pelo app!`,
       data: { visitId: id, propertyId: existing.propertyId, type: 'VISIT_COMPLETED' },
     }).catch(err => logger.error({ err, visitId: id }, '[visitService] Falha ao disparar notificação VISIT_COMPLETED'));
   }
