@@ -139,25 +139,25 @@ export async function createVisit(
     },
   });
 
-  // Gatilho Isolado: Dispara notificação push para o locador se ele tiver um fcmToken
-  const fcmToken = (property as any).landlord?.fcmToken;
+  // Gatilho Isolado: Dispara notificação push + persiste no histórico para o locador
+  const landlordFcmToken = (property as any).landlord?.fcmToken;
+  const landlordId2 = (property as unknown as { landlordId: string }).landlordId;
   const propertyTitle = (property as any).title;
 
-  if (fcmToken) {
-    // Não foi usado await para não travar a resposta da API caso o Firebase demore
-    pushNotificationService.sendPushNotification({
-      token: fcmToken,
-      title: 'Nova Visita Agendada!',
-      body: `Uma visita foi agendada para o seu imóvel: ${propertyTitle}`,
-      data: {
-        visitId: visit.id,
-        propertyId: input.propertyId,
-        type: 'VISIT_SCHEDULED'
-      }
-    }).catch(err => {
-      logger.error({ err, visitId: visit.id }, '[visitService] Falha ao disparar push notification de nova visita');
-    });
-  }
+  pushNotificationService.notify({
+    userId: landlordId2,
+    fcmToken: landlordFcmToken,
+    type: 'VISIT_SCHEDULED',
+    title: 'Nova Visita Agendada!',
+    body: `Uma visita foi agendada para o seu imóvel: ${propertyTitle}`,
+    data: {
+      visitId: visit.id,
+      propertyId: input.propertyId,
+      type: 'VISIT_SCHEDULED'
+    }
+  }).catch(err => {
+    logger.error({ err, visitId: visit.id }, '[visitService] Falha ao disparar notificação de nova visita');
+  });
 
   return visit;
 }
