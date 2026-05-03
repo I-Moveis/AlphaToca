@@ -223,7 +223,7 @@ export async function updateVisit(
     }
   }
 
-  return deps.prisma.visit.update({
+  const updated = await deps.prisma.visit.update({
     where: { id },
     data: {
       ...(input.scheduledAt !== undefined ? { scheduledAt: input.scheduledAt } : {}),
@@ -232,6 +232,29 @@ export async function updateVisit(
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
     },
   });
+
+  // Gatilho: notifica o inquilino quando a visita é concluída
+  if (input.status === 'COMPLETED' && existing.status !== 'COMPLETED') {
+    const tenant = await prisma.user.findUnique({
+      where: { id: existing.tenantId },
+      select: { fcmToken: true },
+    });
+    const property = await prisma.property.findUnique({
+      where: { id: existing.propertyId },
+      select: { title: true },
+    });
+
+    pushNotificationService.notify({
+      userId: existing.tenantId,
+      fcmToken: tenant?.fcmToken,
+      type: 'VISIT_COMPLETED',
+      title: 'Como foi a visita?',
+      body: `Você visitou o imóvel "${property?.title}". Gostou? Faça sua proposta!`,
+      data: { visitId: id, propertyId: existing.propertyId, type: 'VISIT_COMPLETED' },
+    }).catch(err => logger.error({ err, visitId: id }, '[visitService] Falha ao disparar notificação VISIT_COMPLETED'));
+  }
+
+  return updated;
 }
 
 export async function cancelVisit(
@@ -240,10 +263,41 @@ export async function cancelVisit(
 ): Promise<boolean> {
   const existing = await deps.prisma.visit.findUnique({ where: { id } });
   if (!existing) return false;
+
   await deps.prisma.visit.update({
     where: { id },
     data: { status: 'CANCELLED' },
   });
+
+  // Busca dados de locador, inquilino e imóvel para as notificações
+  const [landlord, tenant, property] = await Promise.all([
+    prisma.user.findUnique({ where: { id: existing.landlordId }, select: { fcmToken: true } }),
+    prisma.user.findUnique({ where: { id: existing.tenantId }, select: { fcmToken: true } }),
+    prisma.property.findUnique({ where: { id: existing.propertyId }, select: { title: true } }),
+  ]);
+
+  const propertyTitle = property?.title ?? 'imóvel';
+
+  // Notifica o locador (confirmação de cancelamento)
+  pushNotificationService.notify({
+    userId: existing.landlordId,
+    fcmToken: landlord?.fcmToken,
+    type: 'VISIT_CANCELLED',
+    title: 'Visita Cancelada',
+    body: `A visita ao imóvel "${propertyTitle}" foi cancelada com sucesso.`,
+    data: { visitId: id, propertyId: existing.propertyId, type: 'VISIT_CANCELLED' },
+  }).catch(err => logger.error({ err, visitId: id }, '[visitService] Falha ao notificar locador sobre VISIT_CANCELLED'));
+
+  // Notifica o inquilino (aviso de cancelamento)
+  pushNotificationService.notify({
+    userId: existing.tenantId,
+    fcmToken: tenant?.fcmToken,
+    type: 'VISIT_CANCELLED',
+    title: 'Visita Cancelada',
+    body: `Sua visita ao imóvel "${propertyTitle}" foi cancelada.`,
+    data: { visitId: id, propertyId: existing.propertyId, type: 'VISIT_CANCELLED' },
+  }).catch(err => logger.error({ err, visitId: id }, '[visitService] Falha ao notificar inquílino sobre VISIT_CANCELLED'));
+
   return true;
 }
 
