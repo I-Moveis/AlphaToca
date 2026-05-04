@@ -99,6 +99,20 @@ const options: swaggerJsdoc.Options = {
             }
           }
         },
+        Proposal: {
+          type: 'object',
+          required: ['tenantId', 'propertyId', 'proposedPrice'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            tenantId: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            proposedPrice: { type: 'number', minimum: 0, example: 2400.00 },
+            status: { type: 'string', enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'COUNTER_OFFER', 'WITHDRAWN'], default: 'PENDING' },
+            message: { type: 'string', example: 'Tenho interesse imediato, gostaria de propor este valor.' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
         ErrorResponse: {
           type: 'object',
           properties: {

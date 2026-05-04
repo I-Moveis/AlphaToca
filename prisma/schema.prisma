@@ -111,14 +111,16 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at")
 
   // Relacionamentos inversos (Obrigações do Prisma)
-  properties       Property[]      @relation("LandlordProperties")
-  chatSessions     ChatSession[]   @relation("TenantChats")
-  rentalProcesses  RentalProcess[] @relation("TenantProcesses")
-  visitsAsTenant   Visit[]         @relation("TenantVisits")
-  visitsAsLandlord Visit[]         @relation("LandlordVisits")
-  notifications    Notification[]
-  proposalsMade    Proposal[]      @relation("TenantProposals")
-  favorites        Favorite[]      @relation("UserFavorites")
+  properties          Property[]      @relation("LandlordProperties")
+  chatSessions        ChatSession[]   @relation("TenantChats")
+  rentalProcesses     RentalProcess[] @relation("TenantProcesses")
+  visitsAsTenant      Visit[]         @relation("TenantVisits")
+  visitsAsLandlord    Visit[]         @relation("LandlordVisits")
+  notifications       Notification[]
+  proposalsMade       Proposal[]      @relation("TenantProposals")
+  favorites           Favorite[]      @relation("UserFavorites")
+  contractsAsTenant   Contract[]      @relation("TenantContracts")
+  contractsAsLandlord Contract[]      @relation("LandlordContracts")
 
   @@map("users")
 }
@@ -163,6 +165,7 @@ model Property {
   visits          Visit[]
   proposals       Proposal[]
   favoritedBy     Favorite[]
+  contracts       Contract[]
 
   @@index([moderationStatus], name: "properties_moderation_status_idx")
   @@map("properties")
@@ -364,4 +367,53 @@ model Favorite {
   @@unique([userId, propertyId], name: "favorites_user_property_key")
   @@index([userId], name: "favorites_user_idx")
   @@map("favorites")
+}
+
+model Contract {
+  id          String         @id @default(uuid())
+  propertyId  String         @map("property_id")
+  tenantId    String         @map("tenant_id")
+  landlordId  String         @map("landlord_id")
+  startDate   DateTime       @map("start_date")
+  endDate     DateTime       @map("end_date")
+  monthlyRent Decimal        @map("monthly_rent") @db.Decimal(10, 2)
+  dueDay      Int            @map("due_day")
+  contractUrl String?        @map("contract_url")
+  status      ContractStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  property Property        @relation(fields: [propertyId], references: [id])
+  tenant   User            @relation("TenantContracts", fields: [tenantId], references: [id])
+  landlord User            @relation("LandlordContracts", fields: [landlordId], references: [id])
+  payments TenantPayment[]
+
+  @@map("contracts")
+}
+
+enum ContractStatus {
+  ACTIVE
+  TERMINATED
+  COMPLETED
+}
+
+model TenantPayment {
+  id         String        @id @default(uuid())
+  contractId String        @map("contract_id")
+  amount     Decimal       @db.Decimal(10, 2)
+  dueDate    DateTime      @map("due_date")
+  paidDate   DateTime?     @map("paid_date")
+  status     PaymentStatus @default(PENDING)
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id])
+
+  @@map("tenant_payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
 }

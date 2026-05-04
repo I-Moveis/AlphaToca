@@ -10,6 +10,7 @@ import visitRoutes from './routes/visitRoutes';
 import adminRoutes from './routes/adminRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import proposalRoutes from './routes/proposalRoutes';
+import contractRoutes from './routes/contractRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 import prisma from './config/db';
 import { queueRedisConnection } from './queues/whatsappQueue';
@@ -99,6 +100,9 @@ app.use('/api', authStack, notificationRoutes);
 
 // Proposal Routes
 app.use('/api', authStack, proposalRoutes);
+
+// Contract & Tenant Routes
+app.use('/api', authStack, contractRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
