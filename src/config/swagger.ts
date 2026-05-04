@@ -113,6 +113,32 @@ const options: swaggerJsdoc.Options = {
             updatedAt: { type: 'string', format: 'date-time' },
           },
         },
+        Contract: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            tenantId: { type: 'string', format: 'uuid' },
+            landlordId: { type: 'string', format: 'uuid' },
+            startDate: { type: 'string', format: 'date-time' },
+            endDate: { type: 'string', format: 'date-time' },
+            monthlyRent: { type: 'number' },
+            dueDay: { type: 'integer' },
+            status: { type: 'string', enum: ['ACTIVE', 'TERMINATED', 'COMPLETED'] },
+            contractUrl: { type: 'string', format: 'uri' },
+          },
+        },
+        TenantPayment: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            contractId: { type: 'string', format: 'uuid' },
+            amount: { type: 'number' },
+            dueDate: { type: 'string', format: 'date-time' },
+            paidDate: { type: 'string', format: 'date-time', nullable: true },
+            status: { type: 'string', enum: ['PENDING', 'PAID', 'OVERDUE', 'CANCELLED'] },
+          },
+        },
         ErrorResponse: {
           type: 'object',
           properties: {

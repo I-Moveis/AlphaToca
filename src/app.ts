@@ -11,6 +11,7 @@ import adminRoutes from './routes/adminRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import proposalRoutes from './routes/proposalRoutes';
 import contractRoutes from './routes/contractRoutes';
+import chatRoutes from './routes/chatRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 import prisma from './config/db';
 import { queueRedisConnection } from './queues/whatsappQueue';
@@ -103,6 +104,9 @@ app.use('/api', authStack, proposalRoutes);
 
 // Contract & Tenant Routes
 app.use('/api', authStack, contractRoutes);
+
+// Chat Routes
+app.use('/api', authStack, chatRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
