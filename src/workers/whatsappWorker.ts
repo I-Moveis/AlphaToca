@@ -6,6 +6,9 @@ import prisma from '../config/db';
 import { sendMessage as defaultSendMessage, SendMessageResponse } from '../services/whatsappService';
 import { generateAnswer as defaultGenerateAnswer, GenerateAnswerResult } from '../services/ragChainService';
 import { extractInsights as defaultExtractInsights, ExtractInsightsResult } from '../services/leadExtractionService';
+import { extractSearchFilters as defaultExtractSearchFilters, buildSearchResponse, type SearchFilters } from '../services/searchExtractionService';
+import { propertyService } from '../services/propertyService';
+import type { PropertySearchInput } from '../utils/searchValidation';
 import { logger, type Logger } from '../config/logger';
 import { checkPhoneRateLimit, type PhoneRateLimitResult } from '../utils/phoneRateLimiter';
 
@@ -79,11 +82,18 @@ type ExtractInsightsFn = (input: {
 
 export type PhoneRateLimitCheck = (phoneNumber: string) => Promise<PhoneRateLimitResult>;
 
+type ExtractSearchFiltersFn = (userMessage: string) => Promise<SearchFilters>;
+
+type SearchPropertiesFn = typeof propertyService.searchProperties;
+
 export interface WhatsappHandlerDeps {
     prisma: PrismaWorkerClient;
     sendMessage: SendMessageFn;
     generateAnswer: GenerateAnswerFn;
     extractInsights: ExtractInsightsFn;
+    extractSearchFilters: ExtractSearchFiltersFn;
+    searchProperties: SearchPropertiesFn;
+    appBaseUrl: string;
     scheduleMicrotask?: (task: () => void) => void;
     leadExtractionLimiter?: ConcurrencyLimiter;
     log?: Logger;
@@ -207,6 +217,54 @@ export async function handleWhatsappMessage(
         },
     });
 
+    let useStructuredSearch = false;
+
+    try {
+        const filters = await deps.extractSearchFilters(messageText);
+        if (
+            filters.intent === 'search' &&
+            (filters.city || filters.state) &&
+            filters.maxPrice
+        ) {
+            const result = await deps.searchProperties({
+                city: filters.city ?? undefined,
+                state: filters.state ?? undefined,
+                maxPrice: filters.maxPrice,
+            } as PropertySearchInput);
+
+            const searchAnswer = buildSearchResponse({
+                total: result.meta.total,
+                city: filters.city,
+                state: filters.state,
+                maxPrice: filters.maxPrice,
+                phoneNumber,
+                appBaseUrl: deps.appBaseUrl,
+            });
+
+            await deps.sendMessage(phoneNumber, searchAnswer);
+            await deps.prisma.message.create({
+                data: {
+                    sessionId: chatSession.id,
+                    senderType: 'BOT',
+                    content: searchAnswer,
+                },
+            });
+
+            log.info(
+                { phoneNumber, total: result.meta.total, city: filters.city, state: filters.state, maxPrice: filters.maxPrice },
+                '[worker] structured search response sent; skipping RAG',
+            );
+
+            useStructuredSearch = true;
+        }
+    } catch (extractionErr) {
+        log.warn({ err: extractionErr }, '[worker] search extraction failed; falling back to RAG');
+    }
+
+    if (useStructuredSearch) {
+        return { success: true };
+    }
+
     let answer: string;
     let handoff: boolean;
     let ragError = false;
@@ -301,6 +359,9 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                 sendMessage: defaultSendMessage,
                 generateAnswer: defaultGenerateAnswer,
                 extractInsights: defaultExtractInsights,
+                extractSearchFilters: defaultExtractSearchFilters,
+                searchProperties: propertyService.searchProperties.bind(propertyService),
+                appBaseUrl: process.env.APP_BASE_URL || 'https://app.i-moveis.com',
                 log: jobLog,
                 checkRateLimit: (phoneNumber) =>
                     checkPhoneRateLimit(connection, phoneNumber, {
