@@ -51,7 +51,7 @@ export const pushNotificationService = {
           type,
           title,
           body,
-          data: data ?? null,
+          data: data ?? undefined,
         },
       });
     } catch (err) {
