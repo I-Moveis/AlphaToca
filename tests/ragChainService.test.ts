@@ -307,7 +307,7 @@ describe("generateAnswer", () => {
     });
 
     const result = await generateAnswer(
-      { sessionId: "s1", userMessage: "teste" },
+      { sessionId: "s1", userMessage: "qual o preço do aluguel" },
       deps,
     );
     expect(result.answer).toBe("Parte 1. Parte 2.");
