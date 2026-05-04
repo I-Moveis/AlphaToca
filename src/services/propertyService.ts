@@ -2,6 +2,8 @@ import prisma from '../config/db';
 import { ModerationStatus, Property, PropertyStatus, PropertyType, Prisma } from '@prisma/client';
 import { CreatePropertyInput, UpdatePropertyInput } from '../utils/propertyValidation';
 import { PropertySearchInput } from '../utils/searchValidation';
+import { pushNotificationService } from './pushNotificationService';
+import { logger } from '../config/logger';
 
 // Re-exportado para compatibilidade com código anterior que importe diretamente deste módulo
 export type PropertySearchParams = PropertySearchInput;
@@ -223,10 +225,18 @@ export const propertyService = {
     moderatorId: string,
     reason?: string,
   ): Promise<Property | null> {
-    const exists = await prisma.property.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) return null;
+    // Busca o imóvel com o locador para notificação
+    const property = await prisma.property.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        title: true,
+        landlord: { select: { id: true, fcmToken: true } },
+      },
+    });
+    if (!property) return null;
 
-    return prisma.property.update({
+    const updated = await prisma.property.update({
       where: { id },
       data: {
         moderationStatus: decision,
@@ -235,6 +245,36 @@ export const propertyService = {
         moderatedBy: moderatorId,
       },
     });
+
+    // Gatilho: notifica o locador sobre o resultado da moderação
+    const landlord = property.landlord;
+    const propertyTitle = property.title;
+
+    if (decision === ModerationStatus.APPROVED) {
+      pushNotificationService.notify({
+        userId: landlord.id,
+        fcmToken: landlord.fcmToken,
+        type: 'PROPERTY_APPROVED',
+        title: 'Imóvel Aprovado!',
+        body: `Seu imóvel "${propertyTitle}" foi aprovado e já está visível para os inquilinos.`,
+        data: { propertyId: id, type: 'PROPERTY_APPROVED' },
+      }).catch((err) =>
+        logger.error({ err, propertyId: id }, '[propertyService] Falha ao notificar locador sobre PROPERTY_APPROVED')
+      );
+    } else if (decision === ModerationStatus.REJECTED) {
+      pushNotificationService.notify({
+        userId: landlord.id,
+        fcmToken: landlord.fcmToken,
+        type: 'PROPERTY_REJECTED',
+        title: 'Imóvel Precisa de Ajustes',
+        body: `Seu imóvel "${propertyTitle}" não foi aprovado. Motivo: ${reason ?? 'Verifique os detalhes no app.'}.`,
+        data: { propertyId: id, type: 'PROPERTY_REJECTED' },
+      }).catch((err) =>
+        logger.error({ err, propertyId: id }, '[propertyService] Falha ao notificar locador sobre PROPERTY_REJECTED')
+      );
+    }
+
+    return updated;
   },
 
   async listForModeration(params: { status?: ModerationStatus; page?: number; limit?: number }) {

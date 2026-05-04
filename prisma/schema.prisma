@@ -76,6 +76,20 @@ enum MessageStatus {
   read
 }
 
+enum NotificationType {
+  VISIT_SCHEDULED
+  VISIT_CANCELLED
+  VISIT_REMINDER
+  VISIT_COMPLETED
+  RENTAL_STAGE_CHANGED
+  RENTAL_CLOSED
+  DOCUMENT_REQUESTED
+  DOCUMENT_REJECTED
+  PROPERTY_APPROVED
+  PROPERTY_REJECTED
+  BROADCAST
+}
+
 // 3. Modelos (Tabelas)
 
 model User {
@@ -94,6 +108,7 @@ model User {
   rentalProcesses  RentalProcess[] @relation("TenantProcesses")
   visitsAsTenant   Visit[]         @relation("TenantVisits")
   visitsAsLandlord Visit[]         @relation("LandlordVisits")
+  notifications    Notification[]
 
   @@map("users")
 }
@@ -289,4 +304,20 @@ model Visit {
   @@index([propertyId, scheduledAt], name: "visits_property_time_idx")
   @@index([landlordId, scheduledAt], name: "visits_landlord_time_idx")
   @@map("visits")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?            // Payload extra (visitId, propertyId, etc.)
+  readAt    DateTime?        @map("read_at")  // null = não lida
+  sentAt    DateTime         @default(now()) @map("sent_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt], name: "notifications_user_read_idx")
+  @@map("notifications")
 }

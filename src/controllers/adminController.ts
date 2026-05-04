@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { ModerationStatus } from '@prisma/client';
 import prisma from '../config/db';
 import { propertyService } from '../services/propertyService';
+import { broadcastService, broadcastSchema } from '../services/broadcastService';
 
 const PAGE_MIN = 1;
 const LIMIT_MIN = 1;
@@ -76,6 +77,25 @@ export const adminController = {
 
       const result = await propertyService.listForModeration({ status, page, limit });
       return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * POST /admin/broadcast
+   * Envia uma notificação push para todos os usuários com fcmToken registrado.
+   * Apenas ADMIN.
+   */
+  async sendBroadcast(req: Request, res: Response, next: NextFunction) {
+    try {
+      const input = broadcastSchema.parse(req.body);
+      const result = await broadcastService.sendToAll(input);
+      return res.status(200).json({
+        message: 'Broadcast enviado com sucesso.',
+        sent: result.sent,
+        failed: result.failed,
+      });
     } catch (error) {
       next(error);
     }

@@ -91,4 +91,51 @@ router.get('/admin/metrics', adminOnly, adminController.getMetrics);
  */
 router.get('/admin/properties', adminOnly, adminController.listPendingProperties);
 
+/**
+ * @swagger
+ * /admin/broadcast:
+ *   post:
+ *     summary: Envia notificação push para todos os usuários com fcmToken registrado
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [title, body]
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 maxLength: 100
+ *                 example: "Nova funcionalidade disponível!"
+ *               body:
+ *                 type: string
+ *                 maxLength: 500
+ *                 example: "Confira os novos imóveis disponíveis na sua região."
+ *     responses:
+ *       200:
+ *         description: Broadcast enviado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 sent:
+ *                   type: integer
+ *                 failed:
+ *                   type: integer
+ *       400:
+ *         description: Payload inválido
+ *       401:
+ *         description: Token ausente ou inválido
+ *       403:
+ *         description: Usuário sem role ADMIN
+ */
+router.post('/admin/broadcast', adminOnly, adminController.sendBroadcast);
+
 export default router;
