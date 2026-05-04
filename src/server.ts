@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import app from './app';
 import './workers/whatsappWorker';
 import { setupSwagger } from './config/swagger';
