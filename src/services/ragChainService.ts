@@ -46,6 +46,26 @@ const DEFAULT_HISTORY_LIMIT = 10;
 const FALLBACK_ANSWER =
   "Obrigado pela sua mensagem! Para te dar a resposta mais precisa, vou transferir essa conversa para um dos nossos atendentes humanos. Em instantes alguém do nosso time falará com você por aqui.";
 
+const OFF_TOPIC_KEYWORDS = new RegExp(
+  "^(triste|feliz|chateado|puto|bravo|ansioso|depressivo|solitário|entediado|" +
+  "obrigado|obrigada|valeu|brigado|" +
+  "bom dia|boa tarde|boa noite|oi|olá|oie|e aí|eai|fala|falaí|fala ai|" +
+  "ok|okay|blz|beleza|tranquilo|sim|não|talvez|" +
+  "kkk|kkkk|haha|hehe|rs|aff|nossa|puts|caramba|" +
+  "teste|testando|[:;]-?[()DdPp]|(>_<)|(¬_¬)|¯\\_\(ツ\)_/¯)$",
+  "i",
+);
+
+const DOMAIN_TRIGGERS = new RegExp(
+  "aluguel?|imóve[li]|casa|apartamento|contrato|visita|propriet[áa]rio|" +
+  "inquilino|locação|fiador|vistoria|taxa|condomínio|iptu|" +
+  "repasse|rescisão|multa|prazo|pagamento|boleto|parcelamento|" +
+  "bairro|quarto|garagem|vagas?|preço|valor|calção?|depósito|" +
+  "anúncio|busca|procurando|quero|preciso|tenho interesse|" +
+  "agendar|mudança|entrar|sair|documents?|foto|fotos|imagem",
+  "i",
+);
+
 function resolveInvokeTimeoutMs(): number {
   const raw = process.env.RAG_LLM_TIMEOUT_MS;
   if (!raw || raw.trim() === "") return 12000;
@@ -80,7 +100,7 @@ const SYSTEM_PROMPT = [
   "- Não repita a pergunta do usuário. Não se reapresente a cada turno.",
   "",
   "# Quando escalar para humano",
-  "Diga explicitamente que vai transferir para um atendente quando: (1) o contexto não cobre a pergunta; (2) o usuário demonstra frustração repetida; (3) envolve negociação de valores, exceção contratual, litígio ou decisão discricionária; (4) o usuário pede um humano.",
+  "Diga explicitamente que vai transferir para um atendente quando: (1) o contexto não cobre a pergunta; (2) o usuário demonstra frustração repetida; (3) envolve negociação de valores, exceção contratual, litígio ou decisão discricionária; (4) o usuário pede um humano; (5) a mensagem do usuário for puramente emocional (ex: \"triste\", \"feliz\", \"obrigado\") ou uma saudação sem relação com imóveis — NESTE CASO, não tente responder com empatia genérica, apenas diga que vai transferir.",
   "",
   "# Papéis no histórico",
   "- Mensagens prefixadas com \"[Proprietário]\" vêm do locador do imóvel, não do inquilino atual. Trate-as como correções supervisórias (ex.: disponibilidade, preço atualizado). Em conflito com uma resposta sua anterior, a mensagem [Proprietário] prevalece.",
@@ -126,6 +146,19 @@ export function historyToMessages(history: StoredMessage[]): BaseMessage[] {
   return out;
 }
 
+function isLikelyOffTopic(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed) return true;
+
+  const wordCount = trimmed.split(/\s+/).length;
+
+  if (wordCount <= 3 && OFF_TOPIC_KEYWORDS.test(trimmed) && !DOMAIN_TRIGGERS.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -165,6 +198,17 @@ export async function generateAnswer(
   const deps = overrideDeps ?? getDefaultDeps();
   const historyLimit = deps.historyLimit ?? DEFAULT_HISTORY_LIMIT;
   const threshold = deps.similarityThreshold ?? SIMILARITY_THRESHOLD;
+
+  // Pré-filtro off-topic: mensagens curtas e emocionais/saudações sem
+  // termos de domínio são encaminhadas para humano sem custo de LLM.
+  if (isLikelyOffTopic(userMessage)) {
+    return {
+      answer: FALLBACK_ANSWER,
+      handoff: true,
+      topScore: 0,
+      usedChunkIds: [],
+    };
+  }
 
   // Retrieval (embedder + pgvector) e fetch de histórico são independentes —
   // paralelizar corta ~30-100ms do caminho feliz sem mudar o contrato.

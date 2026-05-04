@@ -8,6 +8,7 @@ const adminOnly = requireRole('ADMIN');
 
 // Authenticated user's own profile (must be before :id to avoid conflict)
 router.get('/users/me', userController.getMe);
+router.patch('/users/me', userController.updateMe);
 router.patch('/users/me/fcm-token', userController.updateFcmToken);
 
 /**

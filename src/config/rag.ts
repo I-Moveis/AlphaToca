@@ -23,7 +23,7 @@ function resolveSimilarityThreshold(): number {
   return parsed;
 }
 export const SIMILARITY_THRESHOLD = resolveSimilarityThreshold();
-export const CHAT_MODEL = "gemini-2.5-flash" as const;
+export const CHAT_MODEL = "google/gemini-2.5-flash" as const;
 
 export type RagConfig = {
   EMBEDDING_MODEL: typeof EMBEDDING_MODEL;

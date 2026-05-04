@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { userService } from '../services/userService';
-import { UserSchema, UserUpdateSchema } from '../utils/userValidation';
+import { UserSchema, UserUpdateSchema, UserUpdateMeSchema } from '../utils/userValidation';
 
 export const userController = {
   /**
@@ -52,6 +52,35 @@ export const userController = {
       }
 
       const updatedUser = await userService.updateUser(localUser.id, { fcmToken });
+      return res.status(200).json(updatedUser);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const localUser = (req as any).localUser;
+
+      if (!localUser) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Authenticated user profile not found in database.' }]
+        });
+      }
+
+      const validatedData = UserUpdateMeSchema.parse(req.body);
+
+      if (Object.keys(validatedData).length === 0) {
+        return res.status(400).json({
+          status: 400,
+          code: 'BAD_REQUEST',
+          messages: [{ message: 'No valid fields to update. Provide phoneNumber and/or role.' }]
+        });
+      }
+
+      const updatedUser = await userService.updateUser(localUser.id, validatedData);
       return res.status(200).json(updatedUser);
     } catch (error) {
       next(error);
