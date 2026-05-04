@@ -12,6 +12,7 @@ import notificationRoutes from './routes/notificationRoutes';
 import proposalRoutes from './routes/proposalRoutes';
 import contractRoutes from './routes/contractRoutes';
 import chatRoutes from './routes/chatRoutes';
+import favoriteRoutes from './routes/favoriteRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 import prisma from './config/db';
 import { queueRedisConnection } from './queues/whatsappQueue';
@@ -107,6 +108,9 @@ app.use('/api', authStack, contractRoutes);
 
 // Chat Routes
 app.use('/api', authStack, chatRoutes);
+
+// Favorite Routes
+app.use('/api', authStack, favoriteRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);
