@@ -159,13 +159,15 @@ model Property {
   propertyTax  Decimal?     @map("property_tax") @db.Decimal(10, 2)
 
   // Relacionamentos
-  landlord        User            @relation("LandlordProperties", fields: [landlordId], references: [id])
+  landlord        User              @relation("LandlordProperties", fields: [landlordId], references: [id])
   rentalProcesses RentalProcess[]
   images          PropertyImage[]
   visits          Visit[]
   proposals       Proposal[]
   favoritedBy     Favorite[]
   contracts       Contract[]
+  expenses        PropertyExpense[]
+  maintenanceLogs MaintenanceLog[]
 
   @@index([moderationStatus], name: "properties_moderation_status_idx")
   @@map("properties")
@@ -367,6 +369,39 @@ model Favorite {
   @@unique([userId, propertyId], name: "favorites_user_property_key")
   @@index([userId], name: "favorites_user_idx")
   @@map("favorites")
+}
+
+model PropertyExpense {
+  id         String   @id @default(uuid())
+  propertyId String   @map("property_id")
+  type       String // "IPTU", "CONDO", "INSURANCE", etc.
+  amount     Decimal  @db.Decimal(10, 2)
+  dueDate    DateTime @map("due_date")
+  isPaid     Boolean  @default(false) @map("is_paid")
+  year       Int
+  month      Int
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, year, month])
+  @@map("property_expenses")
+}
+
+model MaintenanceLog {
+  id          String   @id @default(uuid())
+  propertyId  String   @map("property_id")
+  title       String
+  description String?  @db.Text
+  cost        Decimal? @db.Decimal(10, 2)
+  date        DateTime
+  status      String   @default("COMPLETED") // "PLANNED", "IN_PROGRESS", "COMPLETED"
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("maintenance_logs")
 }
 
 model Contract {
