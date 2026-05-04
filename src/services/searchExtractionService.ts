@@ -80,18 +80,16 @@ export function buildSearchResponse(params: {
   city: string | null;
   state: string | null;
   maxPrice: number;
-  phoneNumber: string;
   appBaseUrl: string;
 }): string {
-  const { total, city, state, maxPrice, phoneNumber, appBaseUrl } = params;
+  const { total, city, state, maxPrice, appBaseUrl } = params;
   const location = city ? `${city}/${state}` : state!;
 
-  const queryParams = new URLSearchParams();
-  queryParams.set("phone", phoneNumber);
-  if (state) queryParams.set("state", state);
-  if (city) queryParams.set("city", city);
-  queryParams.set("maxPrice", String(maxPrice));
-  const magicLink = `${appBaseUrl}/entrar?${queryParams.toString()}`;
+  const searchParams = new URLSearchParams();
+  if (state) searchParams.set("state", state);
+  if (city) searchParams.set("city", city);
+  searchParams.set("maxPrice", String(maxPrice));
+  const deepLink = `${appBaseUrl}/search?${searchParams.toString()}`;
 
   const formattedPrice = maxPrice.toLocaleString("pt-BR");
 
@@ -106,7 +104,7 @@ export function buildSearchResponse(params: {
   return [
     `Encontrei ${total} imóveis em ${location} que cabem no seu orçamento de até R$ ${formattedPrice}. \u{1F3AF}`,
     "",
-    "Para ver as fotos, os detalhes completos e já deixar o seu perfil salvo, clique no seu link de acesso seguro abaixo. Ele usa o seu próprio número de telefone para o login rápido:",
-    `\u{1F449} ${magicLink}`,
+    "Veja as fotos, detalhes completos e filtre como quiser:",
+    `\u{1F449} ${deepLink}`,
   ].join("\n");
 }

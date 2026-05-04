@@ -237,7 +237,6 @@ export async function handleWhatsappMessage(
                 city: filters.city,
                 state: filters.state,
                 maxPrice: filters.maxPrice,
-                phoneNumber,
                 appBaseUrl: deps.appBaseUrl,
             });
 
