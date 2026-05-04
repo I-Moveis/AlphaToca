@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import app from './app';
 import './workers/whatsappWorker';
+import './workers/visitReminderWorker';
 import { setupSwagger } from './config/swagger';
 import { bootstrapLangSmith } from './config/langsmith';
 import { assertRagSecrets } from './config/rag';
