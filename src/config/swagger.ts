@@ -23,10 +23,11 @@ const options: swaggerJsdoc.Options = {
       schemas: {
         User: {
           type: 'object',
-          required: ['name', 'phoneNumber'],
+          required: ['name', 'email', 'phoneNumber'],
           properties: {
             id: { type: 'string', format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' },
             name: { type: 'string', minLength: 2, example: 'João Silva' },
+            email: { type: 'string', format: 'email', example: 'joao.silva@example.com' },
             phoneNumber: { 
               type: 'string', 
               pattern: '^\\+?[1-9]\\d{1,14}$', 
