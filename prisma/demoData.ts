@@ -1,4 +1,4 @@
-import { PropertyType, Role, PropertyStatus } from '@prisma/client';
+import { PropertyType, Role, PropertyStatus, ModerationStatus } from '@prisma/client';
 
 export const demoUsers = [
   {
@@ -43,6 +43,7 @@ export const demoProperties = [
     views: 150,
     condoFee: 800.00,
     propertyTax: 250.00,
+    moderationStatus: ModerationStatus.APPROVED,
     createdAt: new Date(),
   },
   {
@@ -70,6 +71,7 @@ export const demoProperties = [
     views: 320,
     condoFee: 0.0,
     propertyTax: 600.00,
+    moderationStatus: ModerationStatus.APPROVED,
     createdAt: new Date(),
   },
   {
@@ -97,6 +99,7 @@ export const demoProperties = [
     views: 240,
     condoFee: 1200.00,
     propertyTax: 350.00,
+    moderationStatus: ModerationStatus.APPROVED,
     createdAt: new Date(),
   },
   {
@@ -124,6 +127,7 @@ export const demoProperties = [
     views: 110,
     condoFee: 500.00,
     propertyTax: 120.00,
+    moderationStatus: ModerationStatus.APPROVED,
     createdAt: new Date(),
   },
   {
@@ -151,6 +155,7 @@ export const demoProperties = [
     views: 450,
     condoFee: 3500.00,
     propertyTax: 1500.00,
+    moderationStatus: ModerationStatus.APPROVED,
     createdAt: new Date(),
   }
 ];

@@ -79,7 +79,7 @@ export const propertyService = {
       ...(petsAllowed !== undefined && { petsAllowed }),
       ...(nearSubway !== undefined && { nearSubway }),
       ...(isFeatured !== undefined && { isFeatured }),
-      ...(city && { city: { equals: city, mode: 'insensitive' } }),
+      ...(city && { city: { contains: city, mode: 'insensitive' } }),
       ...(state && { state: { equals: state, mode: 'insensitive' } }),
       // Filtros de proprietário/inquilino (§1 BACKEND_GAPS)
       // tenantId é aplicado via visitas (filtragem no join) — ver nota abaixo
@@ -105,12 +105,12 @@ export const propertyService = {
     if (hasLocation || finalOrderBy === 'nearest') {
       const radiusFilter = radius ? Prisma.sql`AND (6371 * acos(cos(radians(${lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians(${lng})) + sin(radians(${lat})) * sin(radians(latitude)))) <= ${radius}` : Prisma.empty;
 
-      const cityFilter = city ? Prisma.sql`AND city ILIKE ${city}` : Prisma.empty;
+      const cityFilter = city ? Prisma.sql`AND city ILIKE ${`%${city}%`}` : Prisma.empty;
       const stateFilter = state ? Prisma.sql`AND state ILIKE ${state}` : Prisma.empty;
 
       // Filtros de proprietário/inquilino no caminho raw SQL
       const landlordFilter = landlordId ? Prisma.sql`AND landlord_id = ${landlordId}::uuid` : Prisma.empty;
-      const statusFilter = landlordId ? Prisma.empty : Prisma.sql`AND status = 'AVAILABLE'`;
+      const statusFilter = landlordId ? Prisma.empty : Prisma.sql`AND status = 'AVAILABLE' AND moderation_status = 'APPROVED'`;
       const tenantFilter = tenantId
         ? Prisma.sql`AND id IN (SELECT property_id FROM visits WHERE tenant_id = ${tenantId}::uuid)`
         : Prisma.empty;
