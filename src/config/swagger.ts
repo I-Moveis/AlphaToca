@@ -15,6 +15,10 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
+        url: 'https://lab.alphaedtech.org.br/server01',
+        description: 'Servidor de Produção (Lab)',
+      },
+      {
         url: 'http://localhost:3000/api',
         description: 'Servidor de Desenvolvimento',
       },
@@ -28,9 +32,9 @@ const options: swaggerJsdoc.Options = {
             id: { type: 'string', format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' },
             name: { type: 'string', minLength: 2, example: 'João Silva' },
             email: { type: 'string', format: 'email', example: 'joao.silva@example.com' },
-            phoneNumber: { 
-              type: 'string', 
-              pattern: '^\\+?[1-9]\\d{1,14}$', 
+            phoneNumber: {
+              type: 'string',
+              pattern: '^\\+?[1-9]\\d{1,14}$',
               example: '+5511999999999',
               description: 'Número de telefone no formato E.164'
             },
@@ -166,5 +170,6 @@ const specs = swaggerJsdoc(options);
 
 export const setupSwagger = (app: Express) => {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
-  console.log('[swagger]: Documentação disponível em http://localhost:3000/api-docs');
+  console.log('[swagger]: Documentação disponível em /api-docs');
 };
+
