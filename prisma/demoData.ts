@@ -3,8 +3,10 @@ import { PropertyType, Role, PropertyStatus, ModerationStatus } from '@prisma/cl
 export const demoUsers = [
   {
     id: 'user-demo-landlord-1',
-    name: 'João Silva (Locador SP)',
-    phoneNumber: '+5511999990001',
+    name: process.env.LANDLORD_NAME || 'João Silva (Locador SP)',
+    email: process.env.LANDLORD_EMAIL || 'landlord@imoveis.com',
+    phoneNumber: process.env.LANDLORD_PHONE_NUMBER || '+5511999990001',
+    firebaseUid: process.env.LANDLORD_FIREBASE_UID || 'mock-landlord-firebase-uid',
     role: Role.LANDLORD,
     createdAt: new Date(),
   },
@@ -13,6 +15,15 @@ export const demoUsers = [
     name: 'Maria Souza (Locatária)',
     phoneNumber: '+5511999990002',
     role: Role.TENANT,
+    createdAt: new Date(),
+  },
+  {
+    id: 'user-demo-admin',
+    name: process.env.ADMIN_NAME || 'Admin AlphaToca',
+    email: process.env.ADMIN_EMAIL || 'admin@alphatoca.com',
+    phoneNumber: process.env.ADMIN_PHONE_NUMBER || '+5511900000000',
+    firebaseUid: process.env.ADMIN_FIREBASE_UID || 'mock-admin-firebase-uid',
+    role: Role.ADMIN,
     createdAt: new Date(),
   }
 ];
@@ -192,5 +203,55 @@ export const demoPropertyImages = [
     isCover: false,
     caption: 'Quarto',
     createdAt: new Date(),
-  }
+  },
+  {
+    id: 'img-demo-rj2-1',
+    propertyId: 'prop-demo-rj-2',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-2/0001.png',
+    isCover: true,
+    caption: 'Sala',
+    createdAt: new Date(),
+  },
+  {
+    id: 'img-demo-rj2-2',
+    propertyId: 'prop-demo-rj-2',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-2/0002.png',
+    isCover: false,
+    caption: 'Quarto',
+    createdAt: new Date(),
+  },
+  {
+    id: 'img-demo-rj2-3',
+    propertyId: 'prop-demo-rj-2',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-2/0003.png',
+    isCover: false,
+    caption: 'Banheiro',
+    createdAt: new Date(),
+  },
+  {
+    id: 'img-demo-rj2-4',
+    propertyId: 'prop-demo-rj-2',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-2/0004.png',
+    isCover: false,
+    caption: 'Cozinha',
+    createdAt: new Date(),
+  },
+  {
+    id: 'img-demo-rj3-1',
+    propertyId: 'prop-demo-rj-3',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-3/0001.jpeg',
+    isCover: true,
+    caption: 'Estudio',
+    createdAt: new Date(),
+  },
+  {
+    id: 'img-demo-rj3-2',
+    propertyId: 'prop-demo-rj-3',
+    url: 'http://10.0.2.2:3000/uploads/prop-demo-rj-3/0002.jpeg',
+    isCover: false,
+    caption: 'Estudio',
+    createdAt: new Date(),
+  },
+
+
 ];
