@@ -3,8 +3,10 @@ import { PropertyType, Role, PropertyStatus, ModerationStatus } from '@prisma/cl
 export const demoUsers = [
   {
     id: 'user-demo-landlord-1',
-    name: 'João Silva (Locador SP)',
-    phoneNumber: '+5511999990001',
+    name: process.env.LANDLORD_NAME || 'João Silva (Locador SP)',
+    email: process.env.LANDLORD_EMAIL || 'landlord@imoveis.com',
+    phoneNumber: process.env.LANDLORD_PHONE_NUMBER || '+5511999990001',
+    firebaseUid: process.env.LANDLORD_FIREBASE_UID || 'mock-landlord-firebase-uid',
     role: Role.LANDLORD,
     createdAt: new Date(),
   },
