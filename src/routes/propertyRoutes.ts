@@ -52,7 +52,7 @@ const landlordAuthStack = [checkJwt, authSyncMiddleware, requireRole(Role.LANDLO
  *                 example: Rua das Flores, 123, São Paulo - SP
  *               type:
  *                 type: string
- *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE, KITNET, PENTHOUSE, LAND, COMMERCIAL]
  *               bedrooms:
  *                 type: integer
  *                 example: 2
@@ -115,7 +115,7 @@ const landlordAuthStack = [checkJwt, authSyncMiddleware, requireRole(Role.LANDLO
  *                 example: Rua das Flores, 123, São Paulo - SP
  *               type:
  *                 type: string
- *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *                 enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE, KITNET, PENTHOUSE, LAND, COMMERCIAL]
  *               bedrooms:
  *                 type: integer
  *                 example: 2
@@ -228,7 +228,7 @@ router.get('/properties', propertyController.list);
  *         name: type
  *         schema:
  *           type: string
- *           enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE]
+ *           enum: [APARTMENT, HOUSE, STUDIO, CONDO_HOUSE, KITNET, PENTHOUSE, LAND, COMMERCIAL]
  *       - in: query
  *         name: minPrice
  *         schema:
