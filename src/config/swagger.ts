@@ -175,6 +175,29 @@ const options: swaggerJsdoc.Options = {
             status: { type: 'string', enum: ['PENDING', 'PAID', 'OVERDUE', 'CANCELLED'] },
           },
         },
+        RentalPayment: {
+          type: 'object',
+          required: ['propertyId', 'period', 'status'],
+          description:
+            'Registro mensal do status do aluguel de um imóvel, indexado por (propertyId, period). Usado pelos endpoints GET/PUT /api/properties/{id}/payments/current. Quando ainda não há linha para o mês corrente, a API responde com o default AWAITING sem persistir — a gravação ocorre apenas via PUT (upsert).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            period: {
+              type: 'string',
+              pattern: '^\\d{4}-(0[1-9]|1[0-2])$',
+              example: '2026-05',
+              description: 'Mês de referência no formato YYYY-MM (servidor define, não vem do cliente).',
+            },
+            status: {
+              type: 'string',
+              enum: ['AWAITING', 'PAID', 'LATE'],
+              default: 'AWAITING',
+            },
+            updatedAt: { type: 'string', format: 'date-time', nullable: true },
+            updatedBy: { type: 'string', format: 'uuid', nullable: true, description: 'id do usuário (landlord) que atualizou o status; null quando ainda não há registro gravado.' },
+          },
+        },
         ErrorResponse: {
           type: 'object',
           properties: {

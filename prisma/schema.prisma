@@ -98,6 +98,17 @@ enum ProposalStatus {
   WITHDRAWN
 }
 
+// Status mensal de pagamento de aluguel por imóvel (modelo RentalPayment).
+// Intencionalmente separado de `PaymentStatus` (PENDING|PAID|OVERDUE|CANCELLED),
+// que pertence ao modelo `TenantPayment` do ciclo de Contract. O PRD pede o nome
+// `PaymentStatus`, mas como Prisma não permite enums homônimos no mesmo schema,
+// o nome foi prefixado para refletir o dono real da relação.
+enum RentalPaymentStatus {
+  AWAITING
+  PAID
+  LATE
+}
+
 // 3. Modelos (Tabelas)
 
 model User {
@@ -121,6 +132,7 @@ model User {
   favorites           Favorite[]      @relation("UserFavorites")
   contractsAsTenant   Contract[]      @relation("TenantContracts")
   contractsAsLandlord Contract[]      @relation("LandlordContracts")
+  rentalPaymentUpdates RentalPayment[] @relation("RentalPaymentUpdatedBy")
 
   @@map("users")
 }
@@ -168,6 +180,7 @@ model Property {
   contracts       Contract[]
   expenses        PropertyExpense[]
   maintenanceLogs MaintenanceLog[]
+  rentalPayments  RentalPayment[]
 
   @@index([moderationStatus], name: "properties_moderation_status_idx")
   @@map("properties")
@@ -451,4 +464,24 @@ enum PaymentStatus {
   PAID
   OVERDUE
   CANCELLED
+}
+
+// Registro mensal de status do aluguel por (propertyId, period="YYYY-MM").
+// Usado pelos endpoints GET/PUT /api/properties/:id/payments/current (US-009, US-010).
+// Quando não há linha para o mês corrente, a API responde com o default (AWAITING)
+// sem persistir — a inserção ocorre apenas quando o landlord escreve via PUT (upsert).
+model RentalPayment {
+  id         String              @id @default(uuid())
+  propertyId String              @map("property_id")
+  period     String              @db.VarChar(7) // formato 'YYYY-MM'
+  status     RentalPaymentStatus @default(AWAITING)
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+  updatedBy  String?             @map("updated_by")
+
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  updatedByUser User?    @relation("RentalPaymentUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@unique([propertyId, period], name: "rental_payments_property_period_key")
+  @@index([propertyId], name: "rental_payments_property_idx")
+  @@map("rental_payments")
 }
