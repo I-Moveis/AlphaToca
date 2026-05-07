@@ -5,6 +5,7 @@ import {
   checkJwt,
   requireRole,
 } from '../middlewares/authMiddleware';
+import { propertyPhotoUploadHandler } from '../middlewares/uploadMiddleware';
 
 const router = Router();
 
@@ -88,7 +89,7 @@ const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/properties', propertyController.create);
+router.post('/properties', propertyPhotoUploadHandler, propertyController.create);
 
 router.get('/properties', propertyController.list);
 
