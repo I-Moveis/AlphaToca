@@ -12,6 +12,10 @@ Started: Wed May  6 10:16:09 PM -03 2026
 - Test suite has 16 pre-existing failures from Auth0 → Firebase migration (tests reference removed `userService.upsertUserFromAuth0`). Not caused by recent stories; verify regressions by running `git stash -u && npm test` vs. current.
 - API error response shape across the codebase: `{ status: number, code: string, messages: [{ message: string }] }` (see `src/middlewares/authMiddleware.ts`). Stay consistent when adding new error branches.
 - Uploads directory lives at project root. `src/app.ts` uses `path.join(__dirname, '../uploads')`; services under `src/services/` should use `path.join(__dirname, '../../uploads')` so both ts-node (from `src/`) and compiled (from `dist/`) resolve to the same project-root `uploads/`.
+- `z.coerce.boolean()` is UNSAFE for multipart request bodies — it treats any non-empty string as truthy, so `"false"` becomes `true`. Always use a `z.preprocess` helper that explicitly maps `'true'`→true and `'false'`→false (pattern already in `src/utils/searchValidation.ts`).
+- `z.coerce.number()` is the right way to accept both multipart strings and JSON numbers in the same schema. Compose with `.int()`, `.nonnegative()`, `.positive()` as needed — those run AFTER coercion.
+- For Prisma `Decimal(10,2)` columns validated via Zod, pattern is `z.coerce.number().<constraint>.transform((v) => new Prisma.Decimal(v))`. Passing `Prisma.Decimal` to `prisma.property.create` works — Prisma also accepts number/string but Decimal avoids floating-point drift.
+- When a Zod schema uses `.parse(req.body)`, Zod's default object mode is "strip" — unknown keys are silently dropped from the output. Adding new OPTIONAL fields to an existing schema never breaks existing callers.
 
 ---
 
@@ -64,4 +68,21 @@ Started: Wed May  6 10:16:09 PM -03 2026
   - Deriving file extensions from `file.mimetype` rather than `file.originalname` is the secure default — never trust the client's filename. Keep a MIME→ext lookup table in the service even though the multer `fileFilter` should have already blocked unknown types; it's belt-and-suspenders and also gives a semantic `.jpg`/`.png` (not `.jpeg`).
   - US-002's `fileFilter` rejects bad MIME types with `Error('INVALID_FILE_TYPE')` — reuse the same error message string here so US-008's global handler only needs one match.
   - When `npm test` fails, check the pre-existing baseline before blaming your change. Current baseline: 4 files / 16 tests failed (all Auth0 migration leftovers in `userSync.test.ts` and siblings calling the removed `userService.upsertUserFromAuth0`).
+---
+
+## 2026-05-06 - US-004
+- Rewrote `createPropertySchema` in `src/utils/propertyValidation.ts` so the same schema accepts JSON bodies and multipart bodies.
+  - `priceField` switched from `z.string().regex(...).transform(Decimal)` to `z.coerce.number().positive().transform(Decimal)` — now works for both `"4500.00"` (multipart) and `4500` (JSON).
+  - Added missing numeric fields that exist on the Prisma Property model (`bedrooms`, `bathrooms`, `parkingSpots`, `views` as int; `area`, `latitude`, `longitude` as float; `condoFee`, `propertyTax` via `optionalMoneyField` → `Prisma.Decimal`) all optional, all via `z.coerce.number()`.
+  - Added `type` (PropertyType enum) as optional.
+  - Added boolean fields (`isFurnished`, `petsAllowed`, `nearSubway`, `isFeatured`) via a local `multipartBoolean` preprocess helper that maps the strings `"true"`/`"false"` explicitly. Deliberately did NOT use `z.coerce.boolean()` — it treats `"false"` as truthy.
+- Smoke-tested via a temporary `src/__smoke_us004.ts` (removed after run) that confirmed: JSON with real numbers/booleans parses, multipart with stringified numbers/booleans parses, negative price is rejected, invalid boolean string is rejected.
+- Typecheck passes. `npm test` unchanged at 16 pre-existing failures / 212 pass — zero regressions.
+- Files changed: `src/utils/propertyValidation.ts` (only).
+- **Learnings for future iterations:**
+  - `z.coerce.boolean()` is a trap in multipart flows — `"false"` becomes `true`. Use `z.preprocess((v) => v === 'true' ? true : v === 'false' ? false : v, z.boolean())` instead. `src/utils/searchValidation.ts` already had this pattern for URL query strings; we now have a matching variant for multipart bodies. If more endpoints get multipart support, lift `multipartBoolean` into a shared util.
+  - `z.coerce.number()` combined with `.int()`, `.nonnegative()`, `.positive()` is safe — constraints run AFTER coercion so the check is against the final number.
+  - `updatePropertySchema` in the same file still uses the old `z.string().regex` priceField and still lacks the extended fields. US-004 only changed the create path per PRD scope. If landlord PATCH via multipart is ever added, `updatePropertySchema` will need the same treatment.
+  - When extending a Zod schema that's called via `.parse(req.body)`, new optional fields never break existing JSON callers — Zod's default object behavior strips unknown keys rather than rejecting them.
+  - Smoke-testing a Zod schema at runtime is cheap and catches the `z.coerce.boolean()` footgun that tsc alone will NOT: both `z.boolean()` and `z.coerce.boolean()` have the same TypeScript output type (`boolean`), so only runtime parsing reveals the semantic bug.
 ---

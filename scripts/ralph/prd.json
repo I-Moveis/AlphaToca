@@ -62,8 +62,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Rewrote createPropertySchema in src/utils/propertyValidation.ts. priceField switched from z.string().regex(...).transform(Decimal) to z.coerce.number().positive().transform(Decimal) — now accepts both multipart strings and JSON numbers. Added optional numeric fields (bedrooms/bathrooms/parkingSpots/views as int, area/latitude/longitude as float, condoFee/propertyTax as Decimal via optionalMoneyField helper) using z.coerce.number() with nonnegative/int constraints. Added type (PropertyType enum) as optional. Added boolean fields isFurnished/petsAllowed/nearSubway/isFeatured using a multipartBoolean preprocess helper that explicitly maps 'true'/'false' strings — z.coerce.boolean() was NOT used because it treats any non-empty string as truthy (so 'false' would become true, a silent data-corruption bug). Verified via smoke test that (1) JSON body with price as string '4500.00' and booleans as real booleans parses correctly, (2) multipart body with numeric strings and 'true'/'false' string booleans parses correctly, (3) negative price is rejected, (4) invalid boolean string ('nope') is rejected. Typecheck passes. Test baseline unchanged (16 pre-existing Auth0 failures / 212 pass)."
     },
     {
       "id": "US-005",
