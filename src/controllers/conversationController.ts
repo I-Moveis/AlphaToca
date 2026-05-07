@@ -1,9 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { propertyService } from '../services/propertyService';
 import { conversationService } from '../services/conversationService';
+import prisma from '../config/db';
 import {
   resolveConversationQuerySchema,
   listConversationsQuerySchema,
+  listConversationMessagesParamsSchema,
+  listConversationMessagesQuerySchema,
 } from '../utils/conversationValidation';
 
 export const conversationController = {
@@ -100,6 +103,68 @@ export const conversationController = {
       const { unreadOnly } = listConversationsQuerySchema.parse(req.query);
       const summaries = await conversationService.list(localUser.id, unreadOnly === 'true');
       return res.status(200).json(summaries);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * GET /api/conversations/:id/messages?before=<uuid>&limit=50
+   *
+   * Retorna um lote paginado (cursor-based) de mensagens da thread, ordenado
+   * createdAt ASC dentro da página. Sem `before`, retorna as `limit` mais
+   * recentes. Com `before`, retorna as `limit` imediatamente anteriores ao id
+   * cursor.
+   *
+   * Autorização usa "existence-hiding 404": tanto conversa inexistente QUANTO
+   * conversa existente-mas-não-sou-participante devolvem 404. Isso previne
+   * que um atacante autenticado descubra quais UUIDs correspondem a conversas
+   * reais sondando respostas 403 vs 404. A mesma regra vale para LL-013 e
+   * LL-015.
+   *
+   * Efeito colateral: toda mensagem do OUTRO participante com readAt=null
+   * retornada nesta página tem readAt=now() gravado numa única updateMany.
+   * Em LL-014, o conversationSocketService emitirá o evento
+   * `conversation:message_read` para o outro participante.
+   */
+  async listMessages(req: Request, res: Response, next: NextFunction) {
+    try {
+      const localUser = req.localUser;
+      if (!localUser) {
+        return res.status(401).json({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          messages: [{ message: 'Authentication required.' }],
+        });
+      }
+
+      const { id } = listConversationMessagesParamsSchema.parse(req.params);
+      const { before, limit } = listConversationMessagesQuerySchema.parse(req.query);
+
+      // Checagem de existência + participação colapsada em um findUnique com
+      // select minimal — existence-hiding 404 para ambos os ramos.
+      const conversation = await prisma.conversation.findUnique({
+        where: { id },
+        select: { landlordId: true, tenantId: true },
+      });
+      if (
+        !conversation ||
+        (conversation.landlordId !== localUser.id && conversation.tenantId !== localUser.id)
+      ) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Conversation not found' }],
+        });
+      }
+
+      const { messages } = await conversationService.listMessages(
+        id,
+        localUser.id,
+        limit,
+        before,
+      );
+      return res.status(200).json(messages);
     } catch (error) {
       next(error);
     }

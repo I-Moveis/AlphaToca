@@ -148,4 +148,88 @@ router.get('/conversations', conversationController.list);
  */
 router.get('/conversations/resolve', conversationController.resolve);
 
+/**
+ * @swagger
+ * /conversations/{id}/messages:
+ *   get:
+ *     summary: Histórico paginado da thread + read receipts automáticos
+ *     description: |
+ *       Retorna um lote de até `limit` mensagens (default 50, máx 100) da
+ *       thread `:id`, ordenado `createdAt` ASC dentro da página.
+ *
+ *       Paginação "cursor anterior":
+ *         - Sem `before`: as `limit` mais recentes.
+ *         - Com `before`: as `limit` imediatamente anteriores ao id cursor.
+ *
+ *       Autorização segue a regra **existence-hiding 404**: tanto conversa
+ *       inexistente quanto conversa existente-mas-não-sou-participante
+ *       devolvem 404 — não 403. Isso evita que um atacante autenticado possa
+ *       enumerar ids de conversas reais.
+ *
+ *       Efeito colateral: toda mensagem do OUTRO participante com
+ *       `readAt=null` que cair nesta página é automaticamente marcada como
+ *       lida (`readAt=now()`) no mesmo request — um único `UPDATE` em batch.
+ *       Em LL-014 isso dispara o evento socket `conversation:message_read`
+ *       para o outro participante.
+ *     tags: [Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: before
+ *         required: false
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Id da mensagem cursor — retorna os `limit` itens mais antigos que este id.
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 50
+ *     responses:
+ *       200:
+ *         description: Lista paginada de mensagens (ASC dentro da página).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id: { type: string, format: uuid }
+ *                   authorId: { type: string, format: uuid }
+ *                   content: { type: string }
+ *                   createdAt: { type: string, format: date-time }
+ *                   readAt: { type: string, format: date-time, nullable: true }
+ *       400:
+ *         description: `id` não-UUID, `before` não-UUID, ou `limit` fora de [1..100].
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Conversa não encontrada OU caller não é participante (existence-hiding).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.get('/conversations/:id/messages', conversationController.listMessages);
+
 export default router;

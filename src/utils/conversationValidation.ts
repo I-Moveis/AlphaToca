@@ -23,3 +23,19 @@ export const listConversationsQuerySchema = z.object({
 });
 
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+
+// Path/query de GET /api/conversations/:id/messages (LL-012 — paginated
+// history). `id` é o id da conversa (uuid). `before` é o cursor opcional: id
+// da mensagem "mais nova já vista" pelo cliente — o servidor retorna o próximo
+// lote ANTERIOR àquele id. `limit` vem como string via query; Zod coerce +
+// clamp 1..100, default 50.
+export const listConversationMessagesParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+export type ListConversationMessagesParams = z.infer<typeof listConversationMessagesParamsSchema>;
+
+export const listConversationMessagesQuerySchema = z.object({
+  before: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+});
+export type ListConversationMessagesQuery = z.infer<typeof listConversationMessagesQuerySchema>;

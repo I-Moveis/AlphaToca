@@ -28,6 +28,25 @@ export type ConversationSummary = {
   linkedTenantId: string;
 };
 
+// Shape da resposta de GET /api/conversations/:id/messages — uma linha por
+// mensagem persistida. `readAt` é `null` para mensagens que ainda não foram
+// marcadas como lidas pelo destinatário (o "outro" participante da thread).
+export type ConversationMessageView = {
+  id: string;
+  authorId: string;
+  content: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+// Resultado interno do listMessages — inclui a lista paginada de mensagens e
+// o array de ids marcados como lidos nesta chamada (usado pelo controller/
+// socket layer na história LL-014 para emitir `conversation:message_read`).
+export type ListMessagesResult = {
+  messages: ConversationMessageView[];
+  markedReadIds: string[];
+};
+
 export const conversationService = {
   /**
    * Resolve (create-or-get) da thread canônica entre (landlord, tenant) para
@@ -161,5 +180,100 @@ export const conversationService = {
     // ISO strings ordenam lexicograficamente = ordenação cronológica.
     filtered.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
     return filtered;
+  },
+
+  /**
+   * LL-012 — GET /api/conversations/:id/messages paginado + read receipts.
+   *
+   * Paginação "página anterior a um cursor":
+   *   - Sem `before`: retorna os `limit` itens mais recentes (orderBy createdAt
+   *     DESC + take + reverse → ASC no retorno).
+   *   - Com `before`: busca o `createdAt` da mensagem cursor (`before` é id,
+   *     não timestamp — ids são oponíveis publicamente mas createdAt é o que
+   *     define a ordem). Depois retorna os `limit` itens com `createdAt < cursor.createdAt`
+   *     (ordenados DESC → reverse para ASC). Se o cursor não pertence à
+   *     conversa (ou não existe), retorna `[]` — comportamento "fim da lista".
+   *
+   * Autorização é no CALLER: o controller já checou `conversation` existe e o
+   * caller é landlord OU tenant. Este método assume esses invariantes — seu
+   * único job é pegar a janela de mensagens e marcar como lidas as que foram
+   * enviadas pelo OUTRO lado (`authorId != userId AND readAt IS NULL`).
+   *
+   * Retorna `markedReadIds` separado do payload principal pra LL-014 poder
+   * emitir `conversation:message_read` via socket sem re-inferir quais rows
+   * transicionaram (updateMany não retorna ids; fazemos um SELECT antes do
+   * UPDATE — o race é mínimo: em pior caso outra request poderia ter marcado
+   * concorrentemente e nossa segunda request marca 0 rows, sem divergência).
+   */
+  async listMessages(
+    conversationId: string,
+    userId: string,
+    limit: number,
+    before?: string,
+  ): Promise<ListMessagesResult> {
+    // Resolve o cursor em createdAt. Usamos findUnique em vez de findFirst
+    // porque `id` é PK — um lookup direto. Se o cursor não existe ou pertence
+    // a outra conversa, tratamos como "fim da lista" e retornamos []. Isso
+    // também desarma cursor-forging entre conversas.
+    let cursorCreatedAt: Date | null = null;
+    if (before) {
+      const cursor = await prisma.conversationMessage.findUnique({
+        where: { id: before },
+        select: { conversationId: true, createdAt: true },
+      });
+      if (!cursor || cursor.conversationId !== conversationId) {
+        return { messages: [], markedReadIds: [] };
+      }
+      cursorCreatedAt = cursor.createdAt;
+    }
+
+    const rows = await prisma.conversationMessage.findMany({
+      where: {
+        conversationId,
+        ...(cursorCreatedAt ? { createdAt: { lt: cursorCreatedAt } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        authorId: true,
+        content: true,
+        createdAt: true,
+        readAt: true,
+      },
+    });
+
+    // Reversão local transforma DESC (ordenação eficiente do take) em ASC
+    // (contrato público).
+    rows.reverse();
+
+    // Read-receipt side effect: marca como lidas APENAS mensagens NOS ROWS
+    // RETORNADOS que sejam do OUTRO participante e ainda não lidas. Batch
+    // UPDATE usando `id IN (...)`. `updateMany` não retorna ids, então
+    // preservamos a lista de ids a partir dos rows que acabamos de selecionar.
+    const unreadFromOther = rows.filter((r) => r.authorId !== userId && r.readAt === null);
+    const unreadIds = unreadFromOther.map((r) => r.id);
+    const now = new Date();
+    if (unreadIds.length > 0) {
+      await prisma.conversationMessage.updateMany({
+        where: { id: { in: unreadIds } },
+        data: { readAt: now },
+      });
+    }
+
+    const readAtByNewly = new Set(unreadIds);
+    const messages: ConversationMessageView[] = rows.map((r) => ({
+      id: r.id,
+      authorId: r.authorId,
+      content: r.content,
+      createdAt: r.createdAt.toISOString(),
+      readAt: readAtByNewly.has(r.id)
+        ? now.toISOString()
+        : r.readAt
+          ? r.readAt.toISOString()
+          : null,
+    }));
+
+    return { messages, markedReadIds: unreadIds };
   },
 };
