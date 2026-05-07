@@ -18,10 +18,15 @@ export const SearchFiltersSchema = z.object({
   city: z.string().nullable(),
   state: z
     .string()
-    .length(2)
-    .transform((s) => s.toUpperCase())
+    .transform((s) => {
+      const trimmed = s.trim().replace(/[^a-zA-Z]/g, "");
+      return trimmed.length >= 2 ? trimmed.slice(0, 2).toUpperCase() : trimmed.toUpperCase();
+    })
     .nullable(),
-  maxPrice: z.number().positive().nullable(),
+  maxPrice: z
+    .coerce.number()
+    .positive()
+    .nullable(),
 });
 
 export type SearchFilters = z.infer<typeof SearchFiltersSchema>;

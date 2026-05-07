@@ -61,7 +61,13 @@ export function initializeSocket(server: HttpServer): Server {
 
     socket.join(`user:${userId}`);
 
-    socket.join('provider:all');
+    if (role === 'LANDLORD') {
+      socket.join(`landlord:${userId}`);
+    }
+
+    if (role === 'LANDLORD' || role === 'ADMIN') {
+      socket.join('provider:all');
+    }
 
     logger.info(
       { userId, role, socketId: socket.id },

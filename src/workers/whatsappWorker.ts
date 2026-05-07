@@ -72,7 +72,7 @@ export function createConcurrencyLimiter(max: number): ConcurrencyLimiter {
 
 const defaultLeadExtractionLimiter = createConcurrencyLimiter(LEAD_EXTRACTION_CONCURRENCY);
 
-type PrismaWorkerClient = Pick<PrismaClient, 'user' | 'chatSession' | 'message'>;
+type PrismaWorkerClient = Pick<PrismaClient, 'user' | 'chatSession' | 'message' | 'property'>;
 
 type SendMessageFn = (to: string, text: string) => Promise<SendMessageResponse>;
 
@@ -194,7 +194,9 @@ export async function handleWhatsappMessage(
     });
 
     const expired = isSessionExpired(previousSession);
-    const isNewOrResetSession = !previousSession || previousSession.status !== 'ACTIVE_BOT' || expired;
+    // Bot só morre quando a sessão é RESOLVED ou expirou (7 dias).
+    // WAITING_HUMAN mantém o bot ativo — o humano complementa, não substitui.
+    const isNewOrResetSession = !previousSession || previousSession.status === 'RESOLVED' || expired;
 
     if (isNewOrResetSession && previousSession) {
         log.info(
@@ -304,9 +306,20 @@ export async function handleWhatsappMessage(
                 },
             });
 
+            // Vincula o primeiro imóvel encontrado à sessão
+            const topProperty = result.data?.[0];
+            if (topProperty) {
+                await deps.prisma.chatSession.update({
+                    where: { id: chatSession.id },
+                    data: { propertyId: topProperty.id },
+                });
+            }
+
             await deps.emitEvent?.('new_message', {
                 tenantId: user.id,
                 sessionId: chatSession.id,
+                propertyId: topProperty?.id ?? null,
+                landlordId: topProperty?.landlordId ?? null,
                 message: {
                     id: searchMsg.id,
                     sessionId: chatSession.id,
@@ -460,12 +473,23 @@ export const whatsappWorker = new Worker<WhatsAppWebhookPayload>(
                     }),
                 emitEvent: async (event: string, data: any) => {
                     const tenantId = data?.tenantId;
+                    const landlordId = data?.landlordId;
                     const senderType = data?.message?.senderType;
-                    if (tenantId) {
-                        socketEmitter.to(`user:${tenantId}`).emit(event, data);
-                    }
-                    if (senderType === 'TENANT' || event === 'session_updated') {
-                        socketEmitter.to('provider:all').emit(event, data);
+                    try {
+                        if (tenantId) {
+                            socketEmitter.to(`user:${tenantId}`).emit(event, data);
+                            jobLog.info({ event, tenantId, sessionId: data?.sessionId }, '[worker] socket event sent to tenant room');
+                        }
+                        // Notificar landlord específico (se identificado)
+                        if (landlordId) {
+                            socketEmitter.to(`user:${landlordId}`).emit('new_lead', data);
+                            jobLog.info({ event, landlordId }, '[worker] new_lead sent to landlord');
+                        } else if (senderType === 'TENANT' || event === 'session_updated') {
+                            socketEmitter.to('provider:all').emit(event, data);
+                            jobLog.info({ event }, '[worker] socket event sent to provider room');
+                        }
+                    } catch (emitErr) {
+                        jobLog.error({ err: emitErr, event }, '[worker] socket emit failed');
                     }
                 },
             });

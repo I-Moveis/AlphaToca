@@ -46,6 +46,12 @@ const DEFAULT_HISTORY_LIMIT = 10;
 const FALLBACK_ANSWER =
   "Obrigado pela sua mensagem! Para te dar a resposta mais precisa, vou transferir essa conversa para um dos nossos atendentes humanos. Em instantes alguém do nosso time falará com você por aqui.";
 
+const NO_CONTEXT_REPLY =
+  "Entendi seu interesse! Para buscar os melhores imóveis para você, me diga:\n" +
+  "\u2022 Em qual cidade e estado você procura?\n" +
+  "\u2022 Qual o valor máximo de aluguel?\n\n" +
+  "Assim já consigo te mostrar as opções disponíveis agora mesmo. \u{1F3E0}";
+
 const OFF_TOPIC_KEYWORDS = new RegExp(
   "^(triste|feliz|chateado|puto|bravo|ansioso|depressivo|solitário|entediado|" +
   "obrigado|obrigada|valeu|brigado|" +
@@ -240,8 +246,8 @@ export async function generateAnswer(
 
   if (chunks.length === 0 || topScore < threshold) {
     return {
-      answer: FALLBACK_ANSWER,
-      handoff: true,
+      answer: DOMAIN_TRIGGERS.test(userMessage) ? NO_CONTEXT_REPLY : FALLBACK_ANSWER,
+      handoff: !DOMAIN_TRIGGERS.test(userMessage),
       topScore,
       usedChunkIds,
     };
