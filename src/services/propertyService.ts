@@ -6,6 +6,20 @@ import { pushNotificationService } from './pushNotificationService';
 import { cleanupPropertyImages, savePropertyImages } from './propertyImageStorageService';
 import { logger } from '../config/logger';
 
+// Erros de negócio do propertyService. O controlador faz `err instanceof
+// PropertyError` e mapeia para { status, code, messages } — mesma forma usada
+// por ContractError/VisitError/ProposalError.
+export class PropertyError extends Error {
+  constructor(
+    public httpStatus: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PropertyError';
+  }
+}
+
 // Re-exportado para compatibilidade com código anterior que importe diretamente deste módulo
 export type PropertySearchParams = PropertySearchInput;
 
@@ -319,46 +333,124 @@ export const propertyService = {
     });
     if (!exists) return null;
 
-    // Caminho legado JSON / multipart sem fotos novas: mantém o contrato anterior
-    // (nenhuma escrita em PropertyImage, nenhum side-effect em disco).
-    if (!files || files.length === 0) {
+    // Zod mistura photosToRemove com os campos escalares — separamos aqui para
+    // não passar chaves inválidas ao prisma.property.update. Dedup de URLs
+    // repetidas no mesmo request evita excluir duas vezes ou tentar promover
+    // uma capa já removida.
+    const { photosToRemove: rawPhotosToRemove, ...scalarData } = data;
+    const photosToRemove = rawPhotosToRemove
+      ? Array.from(new Set(rawPhotosToRemove))
+      : [];
+    const hasFiles = !!files && files.length > 0;
+    const hasRemovals = photosToRemove.length > 0;
+
+    // Regra: URLs em photosToRemove precisam pertencer AO IMÓVEL sendo editado.
+    // 400 (não 404) para não vazar existência de fotos de outros proprietários.
+    if (hasRemovals) {
+      const existingUrls = new Set(exists.images.map((img) => img.url));
+      const invalidUrls = photosToRemove.filter((url) => !existingUrls.has(url));
+      if (invalidUrls.length > 0) {
+        throw new PropertyError(
+          400,
+          'VALIDATION_ERROR',
+          'One or more photo URLs do not belong to this property',
+        );
+      }
+    }
+
+    // Caminho rápido: PUT JSON tradicional sem fotos novas e sem remoções.
+    if (!hasFiles && !hasRemovals) {
       return prisma.property.update({
         where: { id },
-        data,
+        data: scalarData,
         include: { images: true },
       });
     }
 
-    // Se já existe capa, todas as novas fotos ficam com isCover=false — nunca
-    // substituímos a capa silenciosamente na edição. Só promovemos a primeira
-    // foto a capa quando o imóvel não tem nenhuma ainda.
-    const hasExistingCover = exists.images.some((img) => img.isCover);
+    // Computa o estado pós-remoção para decidir capa. Se a capa foi removida e
+    // sobraram imagens existentes, a mais antiga é promovida na mesma tx. Se
+    // sobraram imagens mas nenhuma era capa (caso improvável pós-POST), a
+    // ordenação por createdAt também promove a mais antiga — mantém o invariante
+    // "toda foto-set com pelo menos 1 imagem tem uma capa".
+    const removedSet = new Set(photosToRemove);
+    const remainingExisting = exists.images.filter((img) => !removedSet.has(img.url));
+    const removedCoverImage = exists.images.find(
+      (img) => img.isCover && removedSet.has(img.url),
+    );
+    const promoteOldestRemaining =
+      !!removedCoverImage && remainingExisting.length > 0;
+    const imageToPromote = promoteOldestRemaining
+      ? [...remainingExisting].sort(
+          (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+        )[0]
+      : null;
+
+    // hasCoverAfterRemoval: usado para decidir se a primeira foto nova vira capa.
+    // - Capa existia e NÃO foi removida → já tem capa.
+    // - Capa foi removida mas há imagem para promover → terá capa após a tx.
+    // - Nenhum dos dois → primeira foto nova (se houver) vira capa.
+    const hasCoverAfterRemoval =
+      (exists.images.some((img) => img.isCover) && !removedCoverImage) ||
+      promoteOldestRemaining;
 
     let savedUrls: string[] = [];
 
     try {
-      return await prisma.$transaction(async (tx) => {
+      const updated = await prisma.$transaction(async (tx) => {
+        // 1. Remoção no banco (antes do update escalar para manter a ordem
+        //    documentada no PRD: validate → tx { delete → update → insert }).
+        if (hasRemovals) {
+          await tx.propertyImage.deleteMany({
+            where: { propertyId: id, url: { in: photosToRemove } },
+          });
+
+          if (imageToPromote) {
+            await tx.propertyImage.update({
+              where: { id: imageToPromote.id },
+              data: { isCover: true },
+            });
+          }
+        }
+
+        // 2. Update escalar.
         await tx.property.update({
           where: { id },
-          data,
+          data: scalarData,
         });
 
-        const saved = await savePropertyImages(id, files);
-        savedUrls = saved.map((s) => s.url);
+        // 3. Inserção de novas fotos (fluxo já coberto pelo US-006).
+        if (hasFiles) {
+          const saved = await savePropertyImages(id, files!);
+          savedUrls = saved.map((s) => s.url);
 
-        await tx.propertyImage.createMany({
-          data: saved.map((s, idx) => ({
-            propertyId: id,
-            url: s.url,
-            isCover: !hasExistingCover && idx === 0,
-          })),
-        });
+          await tx.propertyImage.createMany({
+            data: saved.map((s, idx) => ({
+              propertyId: id,
+              url: s.url,
+              isCover: !hasCoverAfterRemoval && idx === 0,
+            })),
+          });
+        }
 
         return tx.property.findUniqueOrThrow({
           where: { id },
           include: { images: true },
         });
       });
+
+      // 4. Só depois do commit apagamos os arquivos em storage — falhas aqui
+      //    NÃO desfazem o commit (a PRD pede log-only). Usa cleanupPropertyImages
+      //    que tolera ENOENT e não lança em rmdir parcial.
+      if (hasRemovals) {
+        await cleanupPropertyImages(id, photosToRemove).catch((cleanupErr) => {
+          logger.warn(
+            { err: cleanupErr, propertyId: id, removedCount: photosToRemove.length },
+            '[propertyService] Storage cleanup after photosToRemove failed; DB state is authoritative',
+          );
+        });
+      }
+
+      return updated;
     } catch (error) {
       if (savedUrls.length > 0) {
         await cleanupPropertyImages(id, savedUrls).catch((cleanupErr) => {

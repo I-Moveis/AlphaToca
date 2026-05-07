@@ -420,6 +420,12 @@ router.get('/properties/:id', propertyController.getById);
  *       Apenas o locador dono do imóvel pode atualizar — qualquer outro usuário recebe 403 FORBIDDEN.
  *       A primeira foto nova só é marcada como capa (`isCover=true`) se o imóvel ainda não tiver capa;
  *       caso contrário, todas as novas fotos são salvas com `isCover=false` (nenhuma substituição silenciosa).
+ *
+ *       Para remover fotos existentes no mesmo request, envie `photosToRemove` (campo repetido no
+ *       multipart) com a URL exata de cada foto a remover (ex. `/uploads/<id>/<file>.jpg`). URLs que
+ *       não pertencem ao imóvel sendo editado retornam 400 `VALIDATION_ERROR` (nunca 404, para não
+ *       vazar existência de fotos de outros imóveis). Se a capa for removida, a foto existente mais
+ *       antiga é promovida automaticamente (`isCover=true`) na mesma transação.
  *     tags: [Propriedades]
  *     security:
  *       - bearerAuth: []
@@ -467,6 +473,16 @@ router.get('/properties/:id', propertyController.getById);
  *                 items:
  *                   type: string
  *                   format: binary
+ *               photosToRemove:
+ *                 type: array
+ *                 description: |
+ *                   URLs de fotos existentes a remover (campo repetido no multipart). Cada URL deve
+ *                   pertencer AO IMÓVEL sendo editado — URLs de outras propriedades retornam 400
+ *                   `VALIDATION_ERROR`. Processado antes da inserção de novas fotos; se a capa for
+ *                   removida, a foto existente mais antiga é promovida a capa automaticamente.
+ *                 items:
+ *                   type: string
+ *                   format: uri
  *     responses:
  *       200:
  *         description: |

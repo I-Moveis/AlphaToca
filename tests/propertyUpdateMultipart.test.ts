@@ -229,3 +229,108 @@ describe('PUT /api/properties/:id — multipart + owner-only (US-006)', () => {
     expect(mockUpdateProperty).not.toHaveBeenCalled();
   });
 });
+
+describe('PUT /api/properties/:id — photosToRemove multipart field (US-007)', () => {
+  it('forwards photosToRemove[] from multer-parsed text fields to the service as a string[]', async () => {
+    const property = seedProperty({
+      images: [
+        { id: 'a', propertyId: 'p', url: '/uploads/p/a.jpg', isCover: true, caption: null, createdAt: new Date().toISOString() },
+        { id: 'b', propertyId: 'p', url: '/uploads/p/b.jpg', isCover: false, caption: null, createdAt: new Date().toISOString() },
+      ],
+    });
+    mockGetPropertyById.mockResolvedValue(property);
+    mockUpdateProperty.mockImplementation(async (_id: string, data: any) => ({
+      ...property,
+      ...data,
+      images: [property.images[1]],
+    }));
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .field('photosToRemove', '/uploads/p/a.jpg')
+      .field('photosToRemove', '/uploads/p/b.jpg');
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateProperty).toHaveBeenCalledTimes(1);
+    const [, dataArg] = mockUpdateProperty.mock.calls[0];
+    expect(dataArg.photosToRemove).toEqual(['/uploads/p/a.jpg', '/uploads/p/b.jpg']);
+  });
+
+  it('normalizes a single photosToRemove field into a one-element array before reaching the service', async () => {
+    const property = seedProperty({
+      images: [
+        { id: 'a', propertyId: 'p', url: '/uploads/p/a.jpg', isCover: true, caption: null, createdAt: new Date().toISOString() },
+      ],
+    });
+    mockGetPropertyById.mockResolvedValue(property);
+    mockUpdateProperty.mockResolvedValue({ ...property, images: [] });
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .field('photosToRemove', '/uploads/p/a.jpg');
+
+    expect(res.status).toBe(200);
+    const [, dataArg] = mockUpdateProperty.mock.calls[0];
+    expect(Array.isArray(dataArg.photosToRemove)).toBe(true);
+    expect(dataArg.photosToRemove).toEqual(['/uploads/p/a.jpg']);
+  });
+
+  it('surfaces PropertyError thrown by the service as 400 VALIDATION_ERROR in the standard error shape', async () => {
+    const property = seedProperty();
+    mockGetPropertyById.mockResolvedValue(property);
+
+    const { PropertyError } = await import('../src/services/propertyService');
+    mockUpdateProperty.mockRejectedValue(
+      new PropertyError(400, 'VALIDATION_ERROR', 'One or more photo URLs do not belong to this property'),
+    );
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .field('photosToRemove', '/uploads/other/foreign.jpg');
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      status: 400,
+      code: 'VALIDATION_ERROR',
+    });
+    expect(res.body.messages[0].message).toMatch(/do not belong to this property/);
+  });
+
+  it('supports combined multipart: new photos + photosToRemove in a single request', async () => {
+    const property = seedProperty({
+      images: [
+        { id: 'old', propertyId: 'p', url: '/uploads/p/old.jpg', isCover: true, caption: null, createdAt: new Date().toISOString() },
+      ],
+    });
+    mockGetPropertyById.mockResolvedValue(property);
+    mockUpdateProperty.mockImplementation(async (id: string, data: any, files?: any[]) => ({
+      ...property,
+      ...data,
+      id,
+      images: (files ?? []).map((_, i) => ({
+        id: randomUUID(),
+        propertyId: id,
+        url: `/uploads/${id}/new-${i}.jpg`,
+        isCover: i === 0,
+        caption: null,
+        createdAt: new Date().toISOString(),
+      })),
+    }));
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .field('photosToRemove', '/uploads/p/old.jpg')
+      .attach('photos', TINY_JPEG, { filename: 'new.jpg', contentType: 'image/jpeg' });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateProperty).toHaveBeenCalledTimes(1);
+    const [, dataArg, filesArg] = mockUpdateProperty.mock.calls[0];
+    expect(dataArg.photosToRemove).toEqual(['/uploads/p/old.jpg']);
+    expect(Array.isArray(filesArg)).toBe(true);
+    expect(filesArg).toHaveLength(1);
+  });
+});

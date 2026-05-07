@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { propertyService } from '../services/propertyService';
+import { propertyService, PropertyError } from '../services/propertyService';
 import {
   createPropertySchema,
   moderatePropertySchema,
@@ -102,6 +102,13 @@ export const propertyController = {
 
       return res.status(200).json(property);
     } catch (error) {
+      if (error instanceof PropertyError) {
+        return res.status(error.httpStatus).json({
+          status: error.httpStatus,
+          code: error.code,
+          messages: [{ message: error.message }],
+        });
+      }
       next(error);
     }
   },
