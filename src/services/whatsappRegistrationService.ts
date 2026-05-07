@@ -1,10 +1,10 @@
 import admin from "../config/firebase";
 import { userService } from "./userService";
+import { sendPasswordReset } from "./mailService";
 import { logger } from "../config/logger";
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 
-// Extrai o primeiro email de uma mensagem
 function extractEmail(message: string): string | null {
   const match = message.match(EMAIL_REGEX);
   return match ? match[0].toLowerCase() : null;
@@ -19,6 +19,25 @@ function generatePassword(): string {
   return pwd;
 }
 
+// Cache de links de reset por phoneNumber (TTL 15 min).
+// Se o usuario falar "nao chegou", reenvia o link pelo WhatsApp.
+const resetLinkCache = new Map<string, { link: string; expiresAt: number }>();
+const RESET_LINK_TTL_MS = 15 * 60_000;
+
+function cacheResetLink(phoneNumber: string, link: string): void {
+  resetLinkCache.set(phoneNumber, { link, expiresAt: Date.now() + RESET_LINK_TTL_MS });
+}
+
+function onResetLink(email: string, phoneNumber: string, resetLink: string): void {
+  cacheResetLink(phoneNumber, resetLink);
+  sendPasswordReset(email, resetLink)
+    .then((ok) => {
+      if (ok) logger.info({ email }, "[registration] password reset email sent");
+      else logger.warn({ email }, "[registration] password reset email failed");
+    })
+    .catch(() => {});
+}
+
 export interface WhatsAppRegistrationResult {
   success: boolean;
   email?: string;
@@ -31,6 +50,16 @@ export const whatsappRegistration = {
     return extractEmail(message);
   },
 
+  /** Se usuario falar "nao chegou" / "nao recebi", devolve o link direto */
+  getResetLink(phoneNumber: string): string | null {
+    const cached = resetLinkCache.get(phoneNumber);
+    if (!cached || Date.now() > cached.expiresAt) {
+      resetLinkCache.delete(phoneNumber);
+      return null;
+    }
+    return cached.link;
+  },
+
   async register(params: {
     phoneNumber: string;
     name: string;
@@ -39,7 +68,7 @@ export const whatsappRegistration = {
     const { phoneNumber, name, email } = params;
 
     try {
-      // Verifica se já existe no Firebase
+      // Verifica se ja existe no Firebase
       try {
         const existing = await admin.auth().getUserByEmail(email);
         if (existing) {
@@ -51,33 +80,35 @@ export const whatsappRegistration = {
             role: "TENANT",
           });
 
-          // Gera link pra redefinir senha e manda no WhatsApp
           let resetLink = "";
           try {
             resetLink = await admin.auth().generatePasswordResetLink(email);
-          } catch {
-            // ignora
-          }
+          } catch { /* ignora */ }
 
-          const resetMsg = resetLink
-            ? `\u{1F511} Crie sua senha aqui: ${resetLink}\n\n`
-            : "";
+          if (resetLink) {
+            onResetLink(email, phoneNumber, resetLink);
+          }
 
           return {
             success: true,
             email,
             message:
-              "Seu e-mail já estava cadastrado! Vinculamos ao seu WhatsApp. \u2705\n\n" +
-              resetMsg +
+              "Seu e-mail ja estava cadastrado! Vinculamos ao seu WhatsApp. \u2705\n\n" +
+              "\u{1F4E7} Enviamos um link no seu e-mail pra criar sua senha. " +
+              "Da uma olhada la (e no spam)! Se nao chegar, me avisa que eu te mando por aqui.\n\n" +
               "Como posso te ajudar com o aluguel?",
             alreadyRegistered: true,
           };
         }
-      } catch {
-        // Não existe ainda, vai criar
+      } catch (err: any) {
+        if (err?.code !== "auth/user-not-found") {
+          throw err;
+        }
       }
 
       const password = generatePassword();
+
+      logger.info({ email, phoneNumber }, "[registration] creating Firebase user");
 
       await admin.auth().createUser({
         email,
@@ -86,10 +117,14 @@ export const whatsappRegistration = {
         phoneNumber: `+${phoneNumber}`,
       });
 
+      logger.info({ email }, "[registration] Firebase user created, fetching uid");
+
       const firebaseUser = await admin.auth().getUserByEmail(email);
       const uid = firebaseUser.uid;
 
-      await userService.upsertUserFromFirebase({
+      logger.info({ email, uid }, "[registration] linking Firebase uid to local DB");
+
+      const localUser = await userService.upsertUserFromFirebase({
         uid,
         name,
         email,
@@ -97,41 +132,46 @@ export const whatsappRegistration = {
         role: "TENANT",
       });
 
-      // Gera link de redefinição de senha e envia direto no WhatsApp.
-      // Mais confiável que depender do email da Firebase chegar no Gmail.
+      logger.info(
+        { phoneNumber, email, uid, localUserId: localUser.id },
+        "[registration] local DB updated with firebaseUid"
+      );
+
       let resetLink = "";
       try {
         resetLink = await admin.auth().generatePasswordResetLink(email);
-      } catch {
-        // ignora
+      } catch { /* ignora */ }
+
+      if (resetLink) {
+        onResetLink(email, phoneNumber, resetLink);
       }
 
       logger.info(
         { phoneNumber, email },
-        "[whatsappRegistration] user registered via WhatsApp"
+        "[registration] user registered via WhatsApp"
       );
-
-      const resetMsg = resetLink
-        ? `\u{1F511} Crie sua senha agora: ${resetLink}\n\n`
-        : "\u{1F4E9} Você receberá um e-mail para criar sua senha.\n";
 
       return {
         success: true,
         email,
         message:
-          "Cadastro concluído! \u2705\n\n" +
-          resetMsg +
+          "Cadastro concluido! \u2705\n\n" +
+          "\u{1F4E7} Enviamos um link no seu e-mail para voce criar sua senha de acesso. " +
+          "Da uma olhada na caixa de entrada (e no spam)!\n\n" +
+          "Se nao chegar em alguns minutos, me avisa que eu te mando o link por aqui.\n\n" +
           "Enquanto isso, como posso te ajudar com o aluguel? \u{1F3E0}",
       };
     } catch (err: any) {
+      const firebaseCode = err?.code || err?.errorInfo?.code || "unknown";
       logger.error(
-        { err, phoneNumber, email },
-        "[whatsappRegistration] registration failed"
+        { err, phoneNumber, email, firebaseCode },
+        "[registration] Firebase registration failed"
       );
       return {
         success: false,
         message:
-          "Tive um problema ao finalizar seu cadastro. Um atendente vai te ajudar com isso, mas pode continuar me perguntando sobre imóveis enquanto isso!",
+          "Tive um problema ao finalizar seu cadastro (" + firebaseCode +
+          "). Um atendente vai te ajudar, mas pode continuar me perguntando sobre imoveis enquanto isso!",
       };
     }
   },

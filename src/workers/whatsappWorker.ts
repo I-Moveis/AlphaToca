@@ -244,10 +244,10 @@ export async function handleWhatsappMessage(
         },
     });
 
-    // Cadastro rápido via WhatsApp: se usuário não tem email e mandou
-    // um email, registra e confirma. Se for novo e sem email, pede no welcome.
-    const needsEmail = !user.email;
-    const extractedEmail = needsEmail ? whatsappRegistration.isEmail(messageText) : null;
+    // Cadastro via WhatsApp: sempre que detectar email na mensagem,
+    // tenta registrar/vincular. O register() já trata "já existe" e
+    // "não existe" corretamente.
+    const extractedEmail = whatsappRegistration.isEmail(messageText);
     if (extractedEmail) {
         try {
             const regResult = await whatsappRegistration.register({
@@ -272,9 +272,31 @@ export async function handleWhatsappMessage(
         return { success: true };
     }
 
+    // Fallback: se usuario falar "nao chegou" / "nao recebi" o email,
+    // e tiver um link de reset em cache, envia o link direto no WhatsApp.
+    const noEmailPhrases = /\b(?:n[aã]o\s+(?:chegou|recebi|veio)|n[aã]o\s+encontrei|cad[eê]\s+o\s+email|cad[eê]\s+o\s+link|reenviar|re-enviar)\b/i;
+    if (noEmailPhrases.test(messageText)) {
+        const cachedLink = whatsappRegistration.getResetLink(phoneNumber);
+        if (cachedLink) {
+            await deps.sendMessage(
+                phoneNumber,
+                "Sem problemas! \u{1F511} Aqui esta o link direto para criar sua senha:\n\n" + cachedLink + "\n\nQualquer duvida, e so chamar!"
+            );
+            await deps.prisma.message.create({
+                data: {
+                    sessionId: chatSession.id,
+                    senderType: 'BOT',
+                    content: cachedLink,
+                },
+            });
+            log.info({ phoneNumber }, '[worker] reset link resent via WhatsApp');
+            return { success: true };
+        }
+    }
+
     if (isNewOrResetSession && GREETING_REGEX.test(messageText.trim())) {
         try {
-            const welcomeText = needsEmail
+            const welcomeText = !user.firebaseUid
                 ? WELCOME_MESSAGE + "\n\n\u{1F4E7} Pra finalizar seu cadastro rapidinho, qual seu melhor e-mail?"
                 : WELCOME_MESSAGE;
             await deps.sendMessage(phoneNumber, welcomeText);
