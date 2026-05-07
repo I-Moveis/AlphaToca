@@ -16,6 +16,7 @@ Started: Wed May  6 10:16:09 PM -03 2026
 - `z.coerce.number()` is the right way to accept both multipart strings and JSON numbers in the same schema. Compose with `.int()`, `.nonnegative()`, `.positive()` as needed — those run AFTER coercion.
 - For Prisma `Decimal(10,2)` columns validated via Zod, pattern is `z.coerce.number().<constraint>.transform((v) => new Prisma.Decimal(v))`. Passing `Prisma.Decimal` to `prisma.property.create` works — Prisma also accepts number/string but Decimal avoids floating-point drift.
 - When a Zod schema uses `.parse(req.body)`, Zod's default object mode is "strip" — unknown keys are silently dropped from the output. Adding new OPTIONAL fields to an existing schema never breaks existing callers.
+- `prisma.$transaction(async (tx) => ...)` does NOT roll back non-DB side-effects (filesystem writes, external API calls). Wrap the call in an outer try/catch, track what state was created, and compensate in the catch. Inside the callback, use `tx`, never `prisma` — mixing them bypasses the transaction.
 
 ---
 
@@ -85,4 +86,26 @@ Started: Wed May  6 10:16:09 PM -03 2026
   - `updatePropertySchema` in the same file still uses the old `z.string().regex` priceField and still lacks the extended fields. US-004 only changed the create path per PRD scope. If landlord PATCH via multipart is ever added, `updatePropertySchema` will need the same treatment.
   - When extending a Zod schema that's called via `.parse(req.body)`, new optional fields never break existing JSON callers — Zod's default object behavior strips unknown keys rather than rejecting them.
   - Smoke-testing a Zod schema at runtime is cheap and catches the `z.coerce.boolean()` footgun that tsc alone will NOT: both `z.boolean()` and `z.coerce.boolean()` have the same TypeScript output type (`boolean`), so only runtime parsing reveals the semantic bug.
+---
+
+## 2026-05-06 - US-005
+- Updated `propertyService.createProperty` in `src/services/propertyService.ts` to accept an optional `files?: Express.Multer.File[]` as its second argument, and return a new `PropertyWithImages` alias (`Property & { images: PropertyImage[] }`).
+- No-files branch: short-circuits to a plain `prisma.property.create({ data, include: { images: true } })`. For JSON-only callers this is functionally unchanged (property is created), with the sole visible difference that the response now has `images: []` — which is exactly what US-006 AC requires ("no regression from current JSON-only flow"). No existing caller (propertyController, adminController, whatsappWorker) relied on `images` being absent from the response.
+- Files-present branch: wraps everything in `prisma.$transaction(async (tx) => { ... })`:
+  1. `tx.property.create({ data })` creates the DB row.
+  2. `savePropertyImages(property.id, files)` writes buffers to disk — called INSIDE the transaction callback per PRD acceptance criteria, so a DB rollback after this point still triggers filesystem cleanup via the outer catch.
+  3. `tx.propertyImage.createMany({ data: saved.map(...) })` inserts the image rows.
+  4. `tx.property.findUniqueOrThrow({ where: { id }, include: { images: true } })` returns the full property-with-images payload as the transaction's return value.
+- Failure-atomicity: `createdPropertyId` and `savedUrls` are captured on each step that succeeds. On any throw from the transaction, the outer catch calls `cleanupPropertyImages(createdPropertyId, savedUrls)`. A failure INSIDE `savePropertyImages` itself (mid-loop write error, or an INVALID_FILE_TYPE belt-and-suspenders throw) is already self-cleaned by that service — `savedUrls` stays `[]` because the assignment only runs after `await` resolves successfully, so the outer cleanup doesn't run twice.
+- Cleanup failures are caught and logged via `logger.error`, never thrown — we must not mask the original error with a cleanup error.
+- Typecheck: `npx tsc --noEmit` passes with zero errors.
+- Tests: `npm test` shows 16 failed / 212 passed — identical to the pre-existing Auth0-migration baseline. No regressions. (Controller still calls `createProperty(validatedData)` with a single arg; TS allows the new param to be omitted since it's optional.)
+- Files changed: `src/services/propertyService.ts` (only).
+- **Learnings for future iterations:**
+  - Prisma's interactive transaction callback (`prisma.$transaction(async (tx) => {...})`) is the right tool when you need non-DB side-effects (filesystem writes) interleaved with DB writes — BUT the side-effects are NOT automatically rolled back. You must do cleanup yourself in an outer catch. The callback receiving `tx` gives you a scoped client; all DB calls inside should use `tx`, never `prisma` (mixing them would bypass the transaction).
+  - `findUniqueOrThrow` is preferable to `findUnique` as the final statement in a create-transaction — the record must exist (we just created it in the same transaction), so `null` would indicate a serious invariant violation rather than a normal "not found" case. Throwing is the correct signal.
+  - When a service accepts an optional trailing parameter (here `files?`), existing callers need NO changes because TypeScript allows omitting optional parameters. This is the safe path for US-006 to wire multer into the controller — the signature change is backward-compatible.
+  - `Property & { images: PropertyImage[] }` is the pragmatic return type for an `include: { images: true }` Prisma query. `Prisma.PropertyGetPayload<{ include: { images: true } }>` is more formally correct but adds verbosity; both are equivalent at runtime.
+  - Ordering of state-capture variables matters: `createdPropertyId = property.id` must come BEFORE `await savePropertyImages(...)` so that a filesystem failure still leaves `createdPropertyId` set — but `savedUrls = saved.map(...)` must come AFTER the await resolves, so a throw from savePropertyImages keeps `savedUrls = []` (savePropertyImages handles its own cleanup in that case). This ordering avoids double-cleanup bugs.
+  - Cleanup errors in the catch block should be swallowed (or logged at error level) and the ORIGINAL error re-thrown. `cleanupPropertyImages(...).catch(...)` achieves this without a nested try/catch.
 ---

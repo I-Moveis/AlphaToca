@@ -78,8 +78,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated propertyService.createProperty in src/services/propertyService.ts to accept optional files?: Express.Multer.File[] second parameter. Added PropertyWithImages return type alias (Property & { images: PropertyImage[] }). No-files branch short-circuits to a plain prisma.property.create with include:{images:true} (returns property with images:[], zero regression for JSON-only callers). Files-present branch runs inside prisma.$transaction(async (tx) => ...): (1) tx.property.create, (2) savePropertyImages (filesystem writes — inside the tx callback as PRD requires), (3) tx.propertyImage.createMany with the returned records, (4) tx.property.findUniqueOrThrow with images:true include. Outer try/catch tracks createdPropertyId and savedUrls so that on any throw (including downstream createMany failures after files were saved), cleanupPropertyImages is invoked with the URLs already returned by savePropertyImages, then the error is re-raised. Cleanup failures are swallowed but logged (don't mask the original error). Note: savePropertyImages already does internal cleanup if it throws mid-loop, so savedUrls stays [] in that case — cleanup runs only when createMany/findUniqueOrThrow fails AFTER a successful save. Typecheck passes; test baseline unchanged at 16 pre-existing Auth0 failures / 212 pass."
     },
     {
       "id": "US-006",
