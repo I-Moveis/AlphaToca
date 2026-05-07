@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { propertyService } from '../services/propertyService';
 import { conversationService } from '../services/conversationService';
+import { conversationSocketService } from '../services/conversationSocketService';
 import prisma from '../config/db';
 import {
   resolveConversationQuerySchema,
@@ -160,12 +161,26 @@ export const conversationController = {
         });
       }
 
-      const { messages } = await conversationService.listMessages(
+      const { messages, markedReadIds } = await conversationService.listMessages(
         id,
         localUser.id,
         limit,
         before,
       );
+
+      // LL-014: read-receipt sidecar via socket. O service já atualizou o
+      // readAt no banco; aqui apenas notificamos o OUTRO participante — o
+      // próprio leitor não precisa de echo. safeEmit é no-op quando não há
+      // ids (ex.: todas já estavam lidas, ou página só tem mensagens do
+      // próprio leitor).
+      if (markedReadIds.length > 0) {
+        conversationSocketService.emitMessagesRead(
+          { id, landlordId: conversation.landlordId, tenantId: conversation.tenantId },
+          localUser.id,
+          markedReadIds,
+        );
+      }
+
       return res.status(200).json(messages);
     } catch (error) {
       next(error);
@@ -219,6 +234,16 @@ export const conversationController = {
       }
 
       const message = await conversationService.createMessage(id, localUser.id, content);
+
+      // LL-014: broadcast para ambas as rooms APÓS o insert ter sucesso.
+      // Fazer o emit antes seria incorreto — uma falha no service deixaria os
+      // clientes com uma mensagem fantasma. safeEmit absorve erros do socket
+      // engine, então o 201 nunca é bloqueado por problemas de pub/sub.
+      conversationSocketService.emitNewMessage(
+        { id, landlordId: conversation.landlordId, tenantId: conversation.tenantId },
+        message,
+      );
+
       return res.status(201).json(message);
     } catch (error) {
       next(error);
