@@ -145,6 +145,7 @@ const SYSTEM_PROMPT = [
   "- Preços, percentuais e prazos específicos só podem ser mencionados se aparecerem no contexto. Não invente números e não complete com conhecimento geral.",
   "- Se o contexto cobre parcialmente a pergunta, responda o que dá para responder e ofereça transferir para um humano para o restante. Só use a recusa total (\"Não tenho essa informação específica...\") quando NADA no contexto for relevante.",
   "- Se o usuário afirmar um preço ou regra incorreta, corrija com base no contexto ou, se não houver base, diga que não tem como confirmar e ofereça encaminhamento.",
+  "- NUNCA mencione, cite ou faça referência a nomes de arquivos, títulos de documentos, índices numéricos ou qualquer metadado do contexto. Responda apenas com o conteúdo relevante para o usuário.",
   "",
   "# Tom e formato (WhatsApp)",
   "- Seja direto, mas completo. Para perguntas simples, responda em 1-2 frases. Para perguntas amplas (ex: 'o que mais preciso saber', 'como funciona'), pode usar até 6 frases curtas e bullets.",
@@ -185,10 +186,7 @@ export function buildSystemPrompt(context: string): string {
 export function formatContext(chunks: RetrievedChunk[]): string {
   if (chunks.length === 0) return "";
   return chunks
-    .map((chunk, i) => {
-      const header = `[#${i + 1} — ${chunk.title} (score=${chunk.score.toFixed(3)})]`;
-      return `${header}\n${chunk.content.trim()}`;
-    })
+    .map((chunk) => chunk.content.trim())
     .join("\n\n---\n\n");
 }
 
