@@ -47,6 +47,10 @@ enum PropertyType {
   HOUSE
   STUDIO
   CONDO_HOUSE
+  KITNET
+  PENTHOUSE
+  LAND
+  COMMERCIAL
 }
 
 enum ProcessStatus {
