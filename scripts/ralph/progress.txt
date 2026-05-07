@@ -14,6 +14,7 @@ Started: Wed May  6 2026 (feature: fix-seed-uuid-consistency)
 - Project name is **I-Moveis** (the repo directory is still named `AlphaToca-Backend`, which is the obsolete legacy name — use I-Moveis in user-facing text and new docs).
 - Zod UUID validators are spread across 6 files under `src/utils/`: `contractValidation.ts`, `proposalValidation.ts`, `visitValidation.ts`, `propertyValidation.ts`, `searchValidation.ts`, `chatValidation.ts`. This PRD keeps all of them strict — any attempt to downgrade to `z.string().min(1)` is a regression.
 - Demo seed entities live in `prisma/demoData.ts` and are inserted via `prisma/seed.ts`. The `/users/me` endpoint returns whatever `id` is in the DB, so seed ids MUST satisfy every downstream validator.
+- `prisma/demoData.ts` image `url` fields are template literals referencing the `DEMO_PROPERTY_RJ_*_ID` constants (e.g. `` `http://10.0.2.2:3000/uploads/${DEMO_PROPERTY_RJ_1_ID}/0001.png` ``). The on-disk folders under `uploads/` are named with the same property UUIDs, not with legacy `prop-demo-rj-*` slugs. If you change a property id constant, rename the matching `uploads/<uuid>/` directory — the static server at `app.use('/uploads', express.static(...))` (src/app.ts:46) resolves URL path segments directly to filesystem paths.
 - Prior archived run (`rag-implementation`) lives in `archive/2026-05-06-rag-implementation/` — consult it for pre-existing patterns (RAG pipeline, LangChain v1 LCEL, pgvector raw SQL, etc.) that aren't relevant to this PRD but are still part of the codebase.
 
 ## Feature goal (this run)
@@ -43,4 +44,20 @@ Replace the hardcoded non-UUID demo ids in `prisma/demoData.ts` (`user-demo-land
   - UUIDs must match strict v4 (third group starts with `4`, fourth with `[89ab]`). Zod's `z.string().uuid()` is lenient (accepts any version), but US-006 pins a strict v4 regex — so pick v4 shape from day one. I used deterministic literal patterns (`11111111-...`, `a0000001-...`, `b0000001-...`, `c0000001-...`) so humans can eyeball the entity type from the first group.
   - `tests/seed.test.ts` currently fails at import time because the `@prisma/client` vitest mock in that file doesn't export the `Role` enum, and `prisma/demoData.ts` uses `Role.LANDLORD` at module top level. This will need fixing in US-006 (which extends `tests/seed.test.ts`). The fix pattern is to use `vi.mock(import("@prisma/client"), async (importOriginal) => { const actual = await importOriginal(); return { ...actual, PrismaClient: class { ... } }; })`.
   - `vitest` `it.each([...] as const)('%s', (name) => { ... })` is idiomatic here — each tuple element becomes a separate test case, keeping failure output granular.
+---
+
+## 2026-05-06 21:18 - US-002
+- Implemented: rewrote `prisma/demoData.ts` to import all 18 constants from `./demoIds` and use them for every id, landlordId, and propertyId field. All legacy literal ids (`user-demo-*`, `prop-demo-*`, `img-demo-*`) were removed — `grep -E "(user-demo-|prop-demo-|img-demo-)" prisma/demoData.ts` returns no matches (exit 1).
+- Cross-references are consistent: all 5 entries in `demoProperties` use `landlordId: DEMO_LANDLORD_1_ID`, and every `propertyId` in `demoPropertyImages` references the matching `DEMO_PROPERTY_RJ_*_ID`.
+- Email fields (`landlord@imoveis.com`, `admin@alphatoca.com`) are intact. `firebaseUid` env-var fallbacks (`LANDLORD_FIREBASE_UID`, `TENANT_FIREBASE_UID`, `ADMIN_FIREBASE_UID`) are unchanged. `prisma/schema.prisma` is untouched.
+- Image `url` fields were converted to template literals that interpolate the property UUID constant (e.g. `` `http://10.0.2.2:3000/uploads/${DEMO_PROPERTY_RJ_1_ID}/0001.png` ``). The corresponding on-disk directories under `uploads/` were renamed to match: `uploads/prop-demo-rj-1` → `uploads/b0000001-0000-4000-8000-000000000001`, `uploads/prop-demo-rj-2` → `uploads/b0000002-...`, `uploads/prop-demo-rj-3` → `uploads/b0000003-...`. Static file serving (`src/app.ts:46`) resolves URL segments directly to disk, so URLs still return 200.
+- Files changed: `prisma/demoData.ts` (rewritten), `uploads/prop-demo-rj-{1,2,3}/` → `uploads/<DEMO_PROPERTY_RJ_{1,2,3}_ID>/` (renamed on disk, git tracks as rename).
+- Quality checks:
+  - `npx tsc --noEmit` → clean
+  - `npx vitest run` → 16 failed / 206 passed — identical to the pre-existing baseline documented in the Codebase Patterns section. No new failures.
+- **Learnings for future iterations:**
+  - The AC "grep -E '(user-demo-|prop-demo-|img-demo-)' prisma/demoData.ts returns no matches" is strict — it catches URL strings too, not just id fields. The fix is to express URLs with template literals that reference the UUID constants, and rename the on-disk `uploads/<slug>/` directories to the new UUIDs. US-003's re-seed verification doesn't fetch those URLs, so there's no runtime breakage.
+  - `uploads/` is served statically from `src/app.ts:46` (`app.use('/uploads', express.static(path.join(__dirname, '../uploads')))`). The URL path segment after `/uploads/` is a direct filesystem lookup — no id translation layer. So directory names must exactly match whatever's in the DB `url` column.
+  - Only one file in the repo (`prisma/demoData.ts`) referenced the legacy `prop-demo-rj-*` slugs (confirmed via `grep -r prop-demo-rj`). Renaming the folders was safe.
+  - `prisma/seed.ts` did not need to change — it imports `demoUsers`, `demoProperties`, `demoPropertyImages` and passes them verbatim to `createMany`. Whatever id shape `demoData.ts` exports is what the DB gets.
 ---
