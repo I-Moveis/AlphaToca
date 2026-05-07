@@ -9,7 +9,7 @@ export const createContractSchema = z.object({
   endDate: z.string().datetime(),
   monthlyRent: z.number().positive(),
   dueDay: z.number().int().min(1).max(31),
-  contractUrl: z.string().url().optional(),
+  pdfUrl: z.string().url().optional(),
 });
 
 export const updateContractStatusSchema = z.object({
@@ -20,3 +20,13 @@ export const updatePaymentStatusSchema = z.object({
   status: z.nativeEnum(PaymentStatus),
   paidDate: z.string().datetime().optional(),
 });
+
+// Query params para GET /api/contracts?propertyId=&tenantId= (US-014). Ambos
+// obrigatórios e em formato UUID canônico — qualquer valor fora do formato
+// resulta em 400 VALIDATION_ERROR antes de qualquer acesso ao banco.
+export const getContractQuerySchema = z.object({
+  propertyId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+});
+
+export type GetContractQuery = z.infer<typeof getContractQuerySchema>;

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { propertyService } from '../services/propertyService';
+import { propertyService, PropertyError } from '../services/propertyService';
 import {
   createPropertySchema,
   moderatePropertySchema,
@@ -60,8 +60,37 @@ export const propertyController = {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
+      const localUser = req.localUser;
+      if (!localUser) {
+        return res.status(401).json({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          messages: [{ message: 'Authentication required.' }],
+        });
+      }
+
+      // Ownership guard antes de validar body: evita vazar informação sobre o
+      // imóvel (shape de erro) pra callers que não são o dono. 404 se não existe
+      // (padrão dos outros handlers), 403 se existe mas não é seu.
+      const existing = await propertyService.getPropertyById(id);
+      if (!existing) {
+        return res.status(404).json({
+          status: 404,
+          code: 'NOT_FOUND',
+          messages: [{ message: 'Property not found' }],
+        });
+      }
+      if (existing.landlordId !== localUser.id) {
+        return res.status(403).json({
+          status: 403,
+          code: 'FORBIDDEN',
+          messages: [{ message: 'Only the property owner can update this property.' }],
+        });
+      }
+
       const validatedData = updatePropertySchema.parse(req.body);
-      const property = await propertyService.updateProperty(id, validatedData);
+      const files = req.files as Express.Multer.File[] | undefined;
+      const property = await propertyService.updateProperty(id, validatedData, files);
 
       if (!property) {
         return res.status(404).json({
@@ -73,6 +102,13 @@ export const propertyController = {
 
       return res.status(200).json(property);
     } catch (error) {
+      if (error instanceof PropertyError) {
+        return res.status(error.httpStatus).json({
+          status: error.httpStatus,
+          code: error.code,
+          messages: [{ message: error.message }],
+        });
+      }
       next(error);
     }
   },

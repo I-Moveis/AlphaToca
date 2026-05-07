@@ -48,6 +48,17 @@ export const createPropertySchema = z.object({
   isFeatured: multipartBoolean.optional(),
 });
 
+// Multer coleta campos de texto repetidos em um array; um único campo chega como
+// string. Normalizamos tudo para string[] antes de validar, para que o
+// controlador/serviço trate um formato único. Aceita URLs relativas (ex.
+// "/uploads/<propertyId>/<file>.jpg") — a URL absoluta aqui romperia o contrato
+// já exposto em PropertyImage.url.
+const photosToRemoveField = z.preprocess((val) => {
+  if (val === undefined || val === null || val === '') return undefined;
+  if (Array.isArray(val)) return val;
+  return [val];
+}, z.array(z.string().min(1)).optional());
+
 export const updatePropertySchema = z.object({
   title: z.string().min(3).max(255).optional(),
   description: z.string().min(10).optional(),
@@ -57,6 +68,7 @@ export const updatePropertySchema = z.object({
   city: z.string().optional(),
   state: z.string().length(2).toUpperCase().optional(),
   zipCode: z.string().optional(),
+  photosToRemove: photosToRemoveField,
 });
 
 // Somente APPROVED ou REJECTED são decisões válidas — PENDING é default no insert

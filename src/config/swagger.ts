@@ -62,7 +62,13 @@ const options: swaggerJsdoc.Options = {
             title: { type: 'string', minLength: 3, example: 'Apartamento Decorado Centro' },
             description: { type: 'string', minLength: 10, example: 'Lindo apartamento com 2 quartos e varanda gourmet.' },
             price: { type: 'number', minimum: 0, example: 2500.00 },
-            status: { type: 'string', enum: ['AVAILABLE', 'IN_NEGOTIATION', 'RENTED'], default: 'AVAILABLE' },
+            status: {
+              type: 'string',
+              enum: ['AVAILABLE', 'NEGOTIATING', 'RENTED'],
+              default: 'AVAILABLE',
+              description:
+                'Pode ser alterado como efeito colateral de endpoints do ciclo de locação: criar um Contract (POST /contracts) muda para RENTED; terminar um Contract (PATCH /contracts/{id}/status para TERMINATED/COMPLETED) volta para AVAILABLE; encerrar um RentalProcess em negociação (PATCH /rental-process/{id}/status para CLOSED) também libera para AVAILABLE. Todas as mutações ocorrem na mesma transação da mudança de status do processo/contrato.',
+            },
             address: { type: 'string', minLength: 5, example: 'Rua das Flores, 123, São Paulo - SP' },
             type: { type: 'string', enum: ['APARTMENT', 'HOUSE', 'STUDIO', 'CONDO_HOUSE'], default: 'APARTMENT' },
             bedrooms: { type: 'integer', minimum: 0, example: 2 },
@@ -83,6 +89,16 @@ const options: swaggerJsdoc.Options = {
               type: 'array',
               description: 'Fotos da propriedade. A primeira foto enviada é marcada como capa (isCover=true).',
               items: { $ref: '#/components/schemas/PropertyImage' },
+            },
+            currentTenant: {
+              type: 'object',
+              nullable: true,
+              description: 'Inquilino do contrato ACTIVE atualmente vinculado ao imóvel. `null` quando não há contrato ACTIVE.',
+              required: ['id', 'name'],
+              properties: {
+                id: { type: 'string', format: 'uuid' },
+                name: { type: 'string', example: 'Maria Silva' },
+              },
             },
           },
         },
@@ -135,6 +151,9 @@ const options: swaggerJsdoc.Options = {
         },
         Contract: {
           type: 'object',
+          required: ['id', 'propertyId', 'tenantId', 'landlordId', 'startDate', 'endDate', 'monthlyRent', 'dueDay', 'status'],
+          description:
+            'Contrato de locação. Fonte de verdade do "ciclo ativo" (status=ACTIVE ⇒ Property.status=RENTED). O campo `pdfUrl` (antigo `contractUrl`) armazena o PDF atualmente anexado — vazio enquanto não há documento; `signedAt` marca o upload do PDF assinado via PUT /api/contracts/:id/signed-document (US-016).',
           properties: {
             id: { type: 'string', format: 'uuid' },
             propertyId: { type: 'string', format: 'uuid' },
@@ -142,10 +161,23 @@ const options: swaggerJsdoc.Options = {
             landlordId: { type: 'string', format: 'uuid' },
             startDate: { type: 'string', format: 'date-time' },
             endDate: { type: 'string', format: 'date-time' },
-            monthlyRent: { type: 'number' },
-            dueDay: { type: 'integer' },
-            status: { type: 'string', enum: ['ACTIVE', 'TERMINATED', 'COMPLETED'] },
-            contractUrl: { type: 'string', format: 'uri' },
+            monthlyRent: { type: 'number', example: 2500.00 },
+            dueDay: { type: 'integer', minimum: 1, maximum: 31 },
+            status: { type: 'string', enum: ['ACTIVE', 'TERMINATED', 'COMPLETED'], default: 'ACTIVE' },
+            pdfUrl: {
+              type: 'string',
+              format: 'uri',
+              nullable: true,
+              description: 'URL do PDF do contrato (quando disponível). Pode ser um path relativo de storage ou uma URL absoluta — clientes devem tratar ambos. `null` enquanto não há documento anexado.',
+            },
+            signedAt: {
+              type: 'string',
+              format: 'date-time',
+              nullable: true,
+              description: 'Instante do upload do PDF assinado. `null` enquanto o landlord ainda não concluiu o ciclo digital.',
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
           },
         },
         TenantPayment: {
@@ -157,6 +189,73 @@ const options: swaggerJsdoc.Options = {
             dueDate: { type: 'string', format: 'date-time' },
             paidDate: { type: 'string', format: 'date-time', nullable: true },
             status: { type: 'string', enum: ['PENDING', 'PAID', 'OVERDUE', 'CANCELLED'] },
+          },
+        },
+        RentalPayment: {
+          type: 'object',
+          required: ['propertyId', 'period', 'status'],
+          description:
+            'Registro mensal do status do aluguel de um imóvel, indexado por (propertyId, period). Usado pelos endpoints GET/PUT /api/properties/{id}/payments/current. Quando ainda não há linha para o mês corrente, a API responde com o default AWAITING sem persistir — a gravação ocorre apenas via PUT (upsert).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            period: {
+              type: 'string',
+              pattern: '^\\d{4}-(0[1-9]|1[0-2])$',
+              example: '2026-05',
+              description: 'Mês de referência no formato YYYY-MM (servidor define, não vem do cliente).',
+            },
+            status: {
+              type: 'string',
+              enum: ['AWAITING', 'PAID', 'LATE'],
+              default: 'AWAITING',
+            },
+            updatedAt: { type: 'string', format: 'date-time', nullable: true },
+            updatedBy: { type: 'string', format: 'uuid', nullable: true, description: 'id do usuário (landlord) que atualizou o status; null quando ainda não há registro gravado.' },
+          },
+        },
+        Conversation: {
+          type: 'object',
+          required: ['id', 'propertyId', 'landlordId', 'tenantId', 'messages', 'createdAt'],
+          description:
+            'Thread de chat canônica entre um (landlord, tenant) em torno de um Property. O `id` é a referência estável usada pelo frontend (substitui os ids sintéticos antigos `property-<pid>-tenant-<tid>`). Resolvida via GET /api/conversations/resolve (US-012), que faz upsert na chave composta (propertyId, landlordId, tenantId). `messages` é sempre `[]` neste PRD — mensagens de chat estão fora do escopo (futura tabela dedicada).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            landlordId: { type: 'string', format: 'uuid' },
+            tenantId: { type: 'string', format: 'uuid' },
+            messages: {
+              type: 'array',
+              description: 'Placeholder — sempre vazio enquanto o histórico de mensagens não for persistido nesta tabela.',
+              items: { type: 'object' },
+              example: [],
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        SupportTicket: {
+          type: 'object',
+          required: ['id', 'code', 'title', 'description', 'userId', 'userName', 'userRole', 'status', 'createdAt', 'updatedAt'],
+          description:
+            'Ticket de suporte aberto por um usuário final (tenant/landlord) ou por um admin. `code` é o protocolo humano SUP-AAMMDD-XXXX gerado no POST (US-018). `userRole` captura o role no momento da abertura — mesmo que o role do usuário mude depois, o valor aqui preserva o contexto. `resolution` é preenchido pelo admin quando o status transiciona para RESOLVED via PUT /api/admin/support/tickets/{id} (US-020).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            code: {
+              type: 'string',
+              pattern: '^SUP-\\d{6}-[A-Z0-9]{4}$',
+              example: 'SUP-260507-A3F2',
+              description: 'Protocolo humano no formato SUP-AAMMDD-XXXX (AAMMDD = data do servidor, XXXX = 4 chars base36 upper).',
+            },
+            title: { type: 'string', minLength: 1, maxLength: 120, example: 'App trava ao enviar foto' },
+            description: { type: 'string', minLength: 1, maxLength: 4000 },
+            userId: { type: 'string', format: 'uuid' },
+            userName: { type: 'string', example: 'Maria Silva' },
+            userRole: { type: 'string', enum: ['TENANT', 'LANDLORD', 'ADMIN'] },
+            status: { type: 'string', enum: ['OPEN', 'RESOLVED'], default: 'OPEN' },
+            resolution: { type: 'string', nullable: true, maxLength: 4000 },
+            assignedToId: { type: 'string', format: 'uuid', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
           },
         },
         ErrorResponse: {

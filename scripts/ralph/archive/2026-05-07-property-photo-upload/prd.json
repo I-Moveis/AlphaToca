@@ -1,0 +1,390 @@
+{
+  "project": "I-Moveis",
+  "branchName": "ralph/backend-landlord-integration",
+  "description": "Backend Landlord Integration Rollout (P1→P3) — Close the gaps listed in BACKEND_HANDOFF.md so the Flutter frontend can complete landlord flows end-to-end: edit properties with multipart photo add/remove, expose property.status and currentTenant in GET responses, auto-transition status on RentalProcess lifecycle, persist monthly rental payment status, resolve 1:1 conversations with canonical IDs, deliver the digital contract cycle (query + PDF download + signed PDF upload), and stop the 404 on POST /api/support/tickets with an admin triage panel (GET + PUT).",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Seeds use canonical UUIDs for all entities",
+      "description": "As a backend engineer, I need seed scripts to generate canonical UUID v4 IDs for User/Property/RentalProcess/Visit so the existing z.string().uuid() validation on GET /api/properties/search?landlordId= stops rejecting the same IDs the backend itself returned.",
+      "acceptanceCriteria": [
+        "All id fields in scripts under prisma/seed* (or equivalent seed entry point — grep for 'user-demo-' first) are produced by crypto.randomUUID()",
+        "No hardcoded literals like 'user-demo-landlord-1' remain in seed code; grep -r 'user-demo-' src/ prisma/ tests/ returns nothing in non-archived paths",
+        "Any test fixture that depended on the old literal is updated to the new seed output or to its own generated UUID",
+        "prisma migrate reset --force && prisma db seed completes without errors",
+        "Integration test tests/seedUuidRegression.test.ts (or a new one if missing) logs in as a demo landlord, reads id from /api/users/me, calls GET /api/properties/search?landlordId=<that id>, asserts 200 (not 400)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Add PropertyStatus enum to Prisma schema and migration",
+      "description": "As a backend engineer, I need the Property model to carry a status field with the enum AVAILABLE|NEGOTIATING|RENTED (default AVAILABLE) so landlord flows can read and write it.",
+      "acceptanceCriteria": [
+        "prisma/schema.prisma defines enum PropertyStatus { AVAILABLE NEGOTIATING RENTED }",
+        "Property model gains `status PropertyStatus @default(AVAILABLE)`",
+        "Migration generated via npx prisma migrate dev --name add_property_status and committed under prisma/migrations/",
+        "Migration applies cleanly on a fresh DB (prisma migrate reset --force succeeds)",
+        "Existing property records — if any — survive the migration with status defaulted to AVAILABLE (no data loss)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Include property.status in GET /properties responses",
+      "description": "As a landlord, I want the status (AVAILABLE/NEGOTIATING/RENTED) to persist visually between refetches so the dropdown stops resetting to default after save.",
+      "acceptanceCriteria": [
+        "GET /api/properties/search returns each item with a `status` field",
+        "GET /api/properties/:id returns `status` in the body",
+        "PUT /api/properties/:id accepts `status` in the JSON body (Zod validation added) and persists it",
+        "Integration test: create property (default AVAILABLE) → PUT status=NEGOTIATING → GET /:id returns NEGOTIATING → GET /search includes NEGOTIATING for that item",
+        "Swagger component schema Property includes `status` with the enum values and default; affected route docs reference it",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Include currentTenant in GET /properties responses",
+      "description": "As a landlord viewing the dossier, I want to see the active tenant's {id, name} on the property so the CHAT button and tenant cards work without a second API call.",
+      "acceptanceCriteria": [
+        "GET /api/properties/:id returns `currentTenant: { id, name } | null` — populated when a RentalProcess with status='ACTIVE' exists for that property; null otherwise",
+        "GET /api/properties/search returns the same field per item (or document in PR notes if implementing via ?expand=tenant instead)",
+        "Query uses a Prisma `include` or join — no N+1. Verify by enabling Prisma query log in a test and asserting the number of queries is constant regardless of page size",
+        "Integration test: property without ACTIVE RentalProcess → currentTenant null; property with ACTIVE → currentTenant:{id,name}",
+        "Swagger Property schema exposes currentTenant as a nullable object with {id, name}",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Auto-transition Property.status on RentalProcess lifecycle",
+      "description": "As the system, I must keep Property.status consistent with RentalProcess lifecycle in the same transaction so the UI never shows 'contract active' + 'property available' simultaneously.",
+      "acceptanceCriteria": [
+        "Wherever RentalProcess.status transitions to ACTIVE (service code — grep 'RentalProcess' in src/services/), Property.status is set to RENTED inside the SAME prisma.$transaction(async (tx) => ...) callback",
+        "Wherever a RentalProcess reaches a terminal state (end-of-term, early termination, cancellation — enumerate in code), Property.status is reset to AVAILABLE in the same transaction",
+        "Activating a second RentalProcess while another is already ACTIVE for the same property throws a clear error (e.g., code 'RENTAL_PROCESS_ALREADY_ACTIVE', status 409) and does NOT mutate state — the transaction rolls back",
+        "Integration test: activate RentalProcess → GET /properties/:id returns status:RENTED; terminate → status:AVAILABLE",
+        "Integration test: simulate tx.rollback after property status mutation (e.g., force createMany to fail) and assert Property.status is unchanged",
+        "Swagger docs note that Property.status may mutate as a side-effect of RentalProcess endpoints (a short description under the Property component schema is enough)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "PUT /api/properties/:id accepts multipart/form-data with photos[]",
+      "description": "As a landlord, I want to add new photos during edit by sending multipart to the PUT endpoint — reusing the existing propertyPhotoUploadHandler from POST — without breaking JSON-only callers.",
+      "acceptanceCriteria": [
+        "Route PUT /api/properties/:id accepts both Content-Type: application/json AND multipart/form-data; the multer middleware (propertyPhotoUploadHandler) runs only on the multipart branch",
+        "When req.files is present, propertyService update path saves them via the existing propertyImageStorageService.savePropertyImages and persists PropertyImage rows in the same transaction as the scalar updates",
+        "First new photo becomes isCover=true ONLY if the property has no existing cover; otherwise all new photos are saved with isCover=false (no silent cover replacement)",
+        "Authorization: only the landlord who owns the property can PUT — everyone else receives 403 FORBIDDEN in the existing { status, code, messages } shape",
+        "JSON-only PUT continues to work unchanged (regression test: PUT application/json with only scalar fields returns 200 and existing images are untouched)",
+        "Integration test: upload 2 photos via multipart on an existing property → GET returns 2 new image URLs persisted, existing images preserved",
+        "Integration test: non-owner attempting multipart PUT returns 403",
+        "Swagger JSDoc for PUT /properties/:id documents BOTH application/json and multipart/form-data content types, mirroring the pattern used on POST (US-009 of the prior ralph run)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "PUT /api/properties/:id handles photosToRemove[] multipart field",
+      "description": "As a landlord, I want to delete specific photos during edit by sending their URLs in the repeated multipart field photosToRemove — processed before any new photos are added.",
+      "acceptanceCriteria": [
+        "Multer is configured to accept the repeated multipart field `photosToRemove` (strings, not files) alongside `photos` files — parsed into req.body.photosToRemove as string[]",
+        "Each submitted URL is validated to belong to the property being edited — any URL that does not match returns 400 VALIDATION_ERROR (no 404, to avoid leaking existence of other properties' photos)",
+        "Processing order inside the service: (1) validate photosToRemove URLs, (2) run a $transaction that deletes PropertyImage rows + scalar field updates + inserts for new photos, (3) after commit, delete actual files from storage via cleanupPropertyImages; storage delete failures are logged (warn) but do not reverse the DB commit",
+        "If the removed photo was isCover, the next remaining image (oldest by createdAt) is promoted to isCover=true in the same transaction",
+        "Integration test: upload 3 photos → PUT multipart with photosToRemove[] containing one existing URL → GET returns 2 photos, removed one gone, cover correctly reassigned if applicable",
+        "Integration test: PUT with photosToRemove[] containing a URL that belongs to ANOTHER property returns 400",
+        "Integration test: combined PUT (new photos + photosToRemove) → both take effect in one request",
+        "Swagger multipart schema for PUT includes `photosToRemove: { type: array, items: { type: string, format: uri } }`",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Add RentalPayment model + migration",
+      "description": "As a backend engineer, I need a RentalPayment table to persist monthly rent payment status per property-period.",
+      "acceptanceCriteria": [
+        "prisma/schema.prisma adds model RentalPayment with fields: id (uuid default), propertyId (relation to Property), period (string, 'YYYY-MM' format), status (enum PaymentStatus: AWAITING|PAID|LATE, default AWAITING), updatedAt (DateTime), updatedBy (relation to User, nullable)",
+        "Unique constraint (propertyId, period) enforced in the schema",
+        "Index on propertyId for efficient per-property queries",
+        "Migration generated via prisma migrate dev --name add_rental_payment and committed",
+        "Migration applies cleanly on a fresh DB",
+        "Swagger components.schemas adds a RentalPayment schema (no route docs yet — that's US-009/US-010)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "GET /api/properties/:id/payments/current",
+      "description": "As a landlord, I want to read the current month's rent payment status for my property — returning AWAITING by default when no record exists yet.",
+      "acceptanceCriteria": [
+        "Route registered under src/routes/propertyRoutes.ts (or a new paymentRoutes.ts — pick the cleanest; document choice in commit)",
+        "Authorization: only the property owner (landlord) can read — non-owner gets 403",
+        "Period is computed server-side as `YYYY-MM` of the server's current date (not from the client)",
+        "When a RentalPayment row exists for (propertyId, period), return { period, status, updatedAt: ISO8601, updatedBy: uuid|null }",
+        "When no row exists, return the SAME shape with status='AWAITING' and updatedAt/updatedBy=null (NOT 404 — the UI relies on always getting a default)",
+        "Integration test: no row → response has status AWAITING and null updatedAt/updatedBy; row exists → response reflects stored values",
+        "Integration test: non-owner returns 403; unauthenticated returns 401",
+        "Swagger documents endpoint, path params, and response schema (referencing the RentalPayment component)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "PUT /api/properties/:id/payments/current",
+      "description": "As a landlord, I want to update the current month's rent payment status, with the server persisting who updated it and when.",
+      "acceptanceCriteria": [
+        "Route registered alongside the GET from US-009",
+        "Authorization: only the property owner (landlord) can write — non-owner gets 403",
+        "Body: { status: 'AWAITING' | 'PAID' | 'LATE' } validated via Zod; any other value returns 400",
+        "Period is ALWAYS the server's current YYYY-MM — not accepted from the body (prevents retroactive edits via API)",
+        "Upsert on (propertyId, period): updatedBy is populated from the JWT's user id; updatedAt is set server-side to now()",
+        "Response returns the full updated object in the same shape as GET",
+        "Integration test: PUT with PAID → subsequent GET returns PAID with correct updatedBy",
+        "Integration test: PUT with invalid status returns 400 in standard error shape",
+        "Integration test: non-owner returns 403",
+        "Swagger documents endpoint, body schema, and response",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add Conversation model + migration",
+      "description": "As a backend engineer, I need a Conversation table with a unique (propertyId, landlordId, tenantId) constraint so resolve can be idempotent without races.",
+      "acceptanceCriteria": [
+        "prisma/schema.prisma adds model Conversation with: id (uuid default), propertyId (relation), landlordId (relation to User), tenantId (relation to User), createdAt (DateTime default now)",
+        "Unique constraint (propertyId, landlordId, tenantId)",
+        "Indexes on landlordId and tenantId for fast per-user conversation lookup",
+        "Migration generated and committed; applies cleanly on fresh DB",
+        "Swagger components.schemas adds Conversation (messages omitted here — out of scope for this PRD; document as empty array placeholder)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "GET /api/conversations/resolve (create-or-get atomic)",
+      "description": "As a landlord clicking CHAT, I want a canonical conversation id returned (created atomically if none exists) so the frontend stops using synthetic ids like property-<pid>-tenant-<tid>.",
+      "acceptanceCriteria": [
+        "Route GET /api/conversations/resolve?propertyId=<uuid>&tenantId=<uuid>",
+        "Validated via Zod — both query params must be valid uuids (400 otherwise)",
+        "Authorization: caller must be either (a) the landlord who owns the property OR (b) the tenant specified. Anyone else gets 403",
+        "Implementation uses prisma.conversation.upsert with where: { propertyId_landlordId_tenantId: ... } — idempotent and race-safe thanks to the unique constraint from US-011",
+        "Response: { id, propertyId, landlordId, tenantId, messages: [], createdAt } — `messages` is always [] in this PRD (chat messages are out of scope)",
+        "Integration test: first call creates; second call with same params returns same id",
+        "Integration test: two concurrent calls from the same caller result in exactly one row (seed with Promise.all of two requests)",
+        "Integration test: caller who is neither landlord nor tenant returns 403",
+        "Swagger documents endpoint, query params, response, and the {status,code,messages} 400/403",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Investigate Contract vs RentalProcess and provision Contract storage",
+      "description": "As a backend engineer, I need to decide whether Contract is a new model or a view of RentalProcess, and land the chosen schema so subsequent endpoints have something to query.",
+      "acceptanceCriteria": [
+        "Read prisma/schema.prisma and src/services/rentalProcessService* (grep first) to map existing fields",
+        "Decision documented at the top of progress.txt for this story: either (A) extend RentalProcess with `pdfUrl String?`, `signedAt DateTime?` and reuse startDate/endDate/monthlyValue if they already exist (preferred if fields overlap) OR (B) create a new Contract model with { id, propertyId, tenantId (nullable), startDate, endDate, monthlyValue, pdfUrl?, signedAt?, createdAt, updatedAt } and a 1:1 relation to RentalProcess",
+        "Whichever path chosen: migration is generated, committed, and applies cleanly on fresh DB",
+        "Swagger components.schemas includes a `Contract` schema (even if it's backed by RentalProcess columns, expose a stable Contract shape for the API)",
+        "No endpoint is added in this story — only the schema change + the shared Contract component schema",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "GET /api/contracts?propertyId=&tenantId=",
+      "description": "As a landlord or tenant, I want to fetch the active contract between a property and a tenant to display dates, value, and the PDF URL.",
+      "acceptanceCriteria": [
+        "Route GET /api/contracts with query params propertyId (uuid) and tenantId (uuid), both required; Zod-validated",
+        "Authorization: caller must be the property's landlord OR the specified tenant; otherwise 403",
+        "Response: { id, propertyId, tenantId, startDate, endDate, monthlyValue, pdfUrl, signedAt } — unset optional fields return null (not undefined)",
+        "When no contract exists, return 404 with code 'CONTRACT_NOT_FOUND' in the standard error shape",
+        "Integration test: no contract → 404 CONTRACT_NOT_FOUND; contract present → 200 with all fields",
+        "Integration test: third-party caller (neither landlord nor tenant) returns 403",
+        "Swagger documents endpoint, query params, 200/404/403 responses",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "GET /api/contracts/:id/pdf",
+      "description": "As a landlord or tenant, I want to download the contract PDF via the API.",
+      "acceptanceCriteria": [
+        "Route GET /api/contracts/:id/pdf",
+        "Authorization: caller must be a party to the contract (landlord OR tenant); otherwise 403",
+        "If the storage backend supports signed URLs, respond 302 with a short-lived signed URL in Location; otherwise stream the file with Content-Type: application/pdf. Document the choice at the top of progress.txt for this story",
+        "If the contract has no pdfUrl, return 404 code 'CONTRACT_PDF_NOT_AVAILABLE'",
+        "Integration test: stored PDF — verify response is a valid PDF (first 4 bytes are '%PDF') OR 302 with a URL that returns a valid PDF when followed",
+        "Integration test: caller not party → 403; missing pdfUrl → 404",
+        "Swagger documents endpoint, response Content-Type (or 302 redirect), and error codes",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "PUT /api/contracts/:id/signed-document (multipart)",
+      "description": "As a landlord, I want to upload the signed PDF for a contract, persisting pdfUrl and signedAt.",
+      "acceptanceCriteria": [
+        "Route PUT /api/contracts/:id/signed-document with multipart field signedPdf (single file)",
+        "Authorization: only the contract's landlord can upload; everyone else gets 403",
+        "Validation: accept ONLY application/pdf AND verify magic bytes (first 4 bytes == '%PDF') on the buffer; reject with 400 code 'INVALID_FILE_TYPE' otherwise",
+        "Size limit: reuse the same limit as propertyPhotoUploadHandler (10MB) OR make it configurable via env var CONTRACT_PDF_MAX_BYTES (default 15MB); document the choice in progress.txt for this story",
+        "Storage uses the same infra used by photos (propertyImageStorageService or a parallel contractDocumentStorageService that mirrors its patterns — do NOT reinvent)",
+        "Persists pdfUrl and signedAt=now(); transaction compensates by deleting the uploaded file if the DB update fails (outer try/catch pattern per Codebase Patterns)",
+        "Response: { signedAt, pdfUrl }",
+        "Integration test: valid PDF upload → GET /api/contracts/:id returns signedAt and pdfUrl; follow-up GET /pdf returns the uploaded bytes",
+        "Integration test: magic-bytes mismatch → 400 INVALID_FILE_TYPE",
+        "Integration test: non-landlord → 403",
+        "Swagger documents endpoint with multipart schema, size limit, and response",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Add SupportTicket model + migration + email stub scaffolding",
+      "description": "As a backend engineer, I need a SupportTicket table and a feature-flagged email stub so ticket endpoints have something to write and notify.",
+      "acceptanceCriteria": [
+        "prisma/schema.prisma adds model SupportTicket with: id (uuid), code (string unique), title (string), description (string), userId (relation to User), userName (string), userRole (enum SupportUserRole: TENANT|LANDLORD|ADMIN), status (enum SupportTicketStatus: OPEN|RESOLVED, default OPEN), resolution (string nullable), assignedToId (relation to User, nullable), createdAt (default now), updatedAt (@updatedAt)",
+        "Migration generated and committed; applies cleanly on fresh DB",
+        "New service src/services/supportEmailService.ts exposes `sendTicketCreated(ticket)` and `sendTicketUpdated(ticket)` — both read env SUPPORT_EMAIL_ENABLED (default 'false'); when disabled they only logger.info the would-be envelope; when enabled they (TODO) integrate with the existing email infra — add a clear TODO comment if no email infra exists yet",
+        "Swagger components.schemas adds SupportTicket",
+        "Unit test for supportEmailService: when SUPPORT_EMAIL_ENABLED=false, no network call made; when true, a stubbed transport is invoked once (use vi.fn())",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "POST /api/support/tickets",
+      "description": "As a landlord or tenant, I want to open a support ticket via the app and receive a human-readable protocol code.",
+      "acceptanceCriteria": [
+        "Route POST /api/support/tickets",
+        "Authentication: any authenticated role (JWT) — 401 if missing",
+        "Body validation via Zod: title (string, 1..120 chars), description (string, 1..4000 chars)",
+        "Server-side from JWT: userId, userName, userRole (TENANT|LANDLORD|ADMIN); createdAt auto",
+        "Generates `code` in format `SUP-AAMMDD-XXXX` where AAMMDD is today's date (server tz) and XXXX is 4 random chars in base36 uppercase — collision-safe (retry up to 5 times if unique violation, then bubble 500)",
+        "Response 201: { id, code, createdAt }",
+        "Calls supportEmailService.sendTicketCreated(ticket) after the DB insert — failures in the email path are logged but do NOT fail the API request",
+        "Integration test: POST returns 201 with `code` matching /^SUP-\\d{6}-[A-Z0-9]{4}$/ and the row is persisted",
+        "Integration test: request without JWT → 401; title > 120 chars → 400; description > 4000 chars → 400",
+        "Swagger documents endpoint, body schema, and 201 response",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "GET /api/admin/support/tickets (admin-only list + filters + pagination)",
+      "description": "As an admin, I want to list and filter support tickets to triage them.",
+      "acceptanceCriteria": [
+        "Route GET /api/admin/support/tickets — protected by JWT AND role=ADMIN (anything else returns 403, anon returns 401)",
+        "Query params (all optional): status (OPEN|RESOLVED), role (TENANT|LANDLORD), from (ISO date), to (ISO date), page (default 1, min 1), pageSize (default 50, min 1, max 200)",
+        "Response envelope: { data: Ticket[], page, pageSize, total }",
+        "Each Ticket item: { id, code, title, description, user: { id, name, email, role }, status, createdAt, updatedAt, assignedTo?: {id,name}, resolution? }",
+        "Default ordering: createdAt DESC",
+        "Integration test: admin lists all; non-admin authenticated → 403; unauthenticated → 401",
+        "Integration test: combined filters (status=RESOLVED&role=LANDLORD&from=...) return the correct subset; page/pageSize produce consistent envelope totals",
+        "Swagger documents endpoint, all query params, and paginated response envelope",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "PUT /api/admin/support/tickets/:id (admin-only update)",
+      "description": "As an admin, I want to update a ticket's status, resolution, and assignee when responding.",
+      "acceptanceCriteria": [
+        "Route PUT /api/admin/support/tickets/:id — JWT + role=ADMIN only",
+        "Body (all optional but at least one required): { status?: 'OPEN'|'RESOLVED', resolution?: string (1..4000), assignedToId?: uuid }",
+        "Business rule: when status transitions to RESOLVED, resolution is required in the same request — 400 VALIDATION_ERROR if missing",
+        "If assignedToId is provided, the referenced User must exist — 400 VALIDATION_ERROR with code 'ASSIGNEE_NOT_FOUND' otherwise (do NOT 500 on FK violation)",
+        "On successful status change, invoke supportEmailService.sendTicketUpdated(ticket); failures are logged, not fatal",
+        "Response: full updated object in the same shape as a GET envelope item (from US-019)",
+        "Integration test: admin resolves ticket with resolution → GET returns RESOLVED with resolution; non-admin → 403",
+        "Integration test: status=RESOLVED without resolution → 400",
+        "Integration test: assignedToId for a non-existent user → 400 ASSIGNEE_NOT_FOUND",
+        "Swagger documents endpoint, body (including the RESOLVED requires-resolution rule as a description), and response",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

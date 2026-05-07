@@ -192,7 +192,7 @@ Proprietários podem cadastrar imóveis fornecendo:
 
 ### Status do imóvel
 - **Disponível (AVAILABLE):** Imóvel disponível para locação
-- **Em Negociação (IN_NEGOTIATION):** Há uma proposta em andamento
+- **Em Negociação (NEGOTIATING):** Há uma proposta em andamento
 - **Alugado (RENTED):** Imóvel já alugado
 
 ### Moderação

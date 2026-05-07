@@ -20,7 +20,7 @@ enum Role {
 
 enum PropertyStatus {
   AVAILABLE
-  IN_NEGOTIATION
+  NEGOTIATING
   RENTED
 }
 
@@ -98,6 +98,17 @@ enum ProposalStatus {
   WITHDRAWN
 }
 
+// Status mensal de pagamento de aluguel por imóvel (modelo RentalPayment).
+// Intencionalmente separado de `PaymentStatus` (PENDING|PAID|OVERDUE|CANCELLED),
+// que pertence ao modelo `TenantPayment` do ciclo de Contract. O PRD pede o nome
+// `PaymentStatus`, mas como Prisma não permite enums homônimos no mesmo schema,
+// o nome foi prefixado para refletir o dono real da relação.
+enum RentalPaymentStatus {
+  AWAITING
+  PAID
+  LATE
+}
+
 // 3. Modelos (Tabelas)
 
 model User {
@@ -121,6 +132,11 @@ model User {
   favorites           Favorite[]      @relation("UserFavorites")
   contractsAsTenant   Contract[]      @relation("TenantContracts")
   contractsAsLandlord Contract[]      @relation("LandlordContracts")
+  rentalPaymentUpdates RentalPayment[] @relation("RentalPaymentUpdatedBy")
+  conversationsAsLandlord Conversation[] @relation("LandlordConversations")
+  conversationsAsTenant   Conversation[] @relation("TenantConversations")
+  supportTicketsOpened    SupportTicket[] @relation("SupportTicketOpener")
+  supportTicketsAssigned  SupportTicket[] @relation("SupportTicketAssignee")
 
   @@map("users")
 }
@@ -168,6 +184,8 @@ model Property {
   contracts       Contract[]
   expenses        PropertyExpense[]
   maintenanceLogs MaintenanceLog[]
+  rentalPayments  RentalPayment[]
+  conversations   Conversation[]
   chatSessions    ChatSession[]
 
   @@index([moderationStatus], name: "properties_moderation_status_idx")
@@ -408,6 +426,12 @@ model MaintenanceLog {
   @@map("maintenance_logs")
 }
 
+// O modelo Contract é a fonte de verdade do "ciclo ativo de locação" neste
+// codebase — ver progress.txt US-004/US-005. O PRD US-013 oferecia (A) estender
+// RentalProcess ou (B) criar um novo Contract; como o Contract já existia com
+// startDate/endDate/monthlyRent/landlordId/tenantId, a decisão foi estender
+// este modelo com os campos que faltavam para o ciclo digital (`pdfUrl` renomeado
+// a partir de `contractUrl`, `signedAt` novo), sem criar um modelo paralelo.
 model Contract {
   id          String         @id @default(uuid())
   propertyId  String         @map("property_id")
@@ -417,7 +441,14 @@ model Contract {
   endDate     DateTime       @map("end_date")
   monthlyRent Decimal        @map("monthly_rent") @db.Decimal(10, 2)
   dueDay      Int            @map("due_day")
-  contractUrl String?        @map("contract_url")
+  // URL do PDF do contrato (antigo `contractUrl` — renomeado em US-013 para
+  // casar com o contrato exposto na API). Populado pelo PUT
+  // /api/contracts/:id/signed-document (US-016).
+  pdfUrl      String?        @map("pdf_url")
+  // Marca o momento em que o landlord fez upload do PDF assinado. Setado pelo
+  // PUT /api/contracts/:id/signed-document (US-016). `null` enquanto não há
+  // versão assinada armazenada.
+  signedAt    DateTime?      @map("signed_at")
   status      ContractStatus @default(ACTIVE)
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
@@ -455,4 +486,86 @@ enum PaymentStatus {
   PAID
   OVERDUE
   CANCELLED
+}
+
+// Registro mensal de status do aluguel por (propertyId, period="YYYY-MM").
+// Usado pelos endpoints GET/PUT /api/properties/:id/payments/current (US-009, US-010).
+// Quando não há linha para o mês corrente, a API responde com o default (AWAITING)
+// sem persistir — a inserção ocorre apenas quando o landlord escreve via PUT (upsert).
+model RentalPayment {
+  id         String              @id @default(uuid())
+  propertyId String              @map("property_id")
+  period     String              @db.VarChar(7) // formato 'YYYY-MM'
+  status     RentalPaymentStatus @default(AWAITING)
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+  updatedBy  String?             @map("updated_by")
+
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  updatedByUser User?    @relation("RentalPaymentUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@unique([propertyId, period], name: "rental_payments_property_period_key")
+  @@index([propertyId], name: "rental_payments_property_idx")
+  @@map("rental_payments")
+}
+
+// Tickets de suporte abertos por usuários finais (landlord/tenant) ou por admins,
+// listados e triados via endpoints /api/support/tickets (US-018) e
+// /api/admin/support/tickets (US-019/US-020). `code` é um protocolo humano
+// SUP-AAMMDD-XXXX gerado no POST; `userRole` captura o role no momento da
+// abertura para auditoria (mesmo que o role do usuário mude depois).
+enum SupportUserRole {
+  TENANT
+  LANDLORD
+  ADMIN
+}
+
+enum SupportTicketStatus {
+  OPEN
+  RESOLVED
+}
+
+model SupportTicket {
+  id           String              @id @default(uuid())
+  code         String              @unique
+  title        String
+  description  String              @db.Text
+  userId       String              @map("user_id")
+  userName     String              @map("user_name")
+  userRole     SupportUserRole     @map("user_role")
+  status       SupportTicketStatus @default(OPEN)
+  resolution   String?             @db.Text
+  assignedToId String?             @map("assigned_to_id")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  user       User  @relation("SupportTicketOpener", fields: [userId], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt], name: "support_tickets_status_created_idx")
+  @@index([userRole, createdAt], name: "support_tickets_role_created_idx")
+  @@index([userId], name: "support_tickets_user_idx")
+  @@map("support_tickets")
+}
+
+// Thread de chat canônico entre um (landlord, tenant) em torno de um Property.
+// O id é referência estável usada pelo frontend (substitui os antigos ids sintéticos
+// "property-<pid>-tenant-<tid>"). O endpoint GET /api/conversations/resolve (US-012)
+// faz upsert na chave composta (propertyId, landlordId, tenantId) — a unicidade é
+// o mecanismo anti-race. Mensagens vivem em outra tabela (fora do escopo deste PRD);
+// a API documenta `messages: []` como placeholder.
+model Conversation {
+  id         String   @id @default(uuid())
+  propertyId String   @map("property_id")
+  landlordId String   @map("landlord_id")
+  tenantId   String   @map("tenant_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  landlord User     @relation("LandlordConversations", fields: [landlordId], references: [id], onDelete: Cascade)
+  tenant   User     @relation("TenantConversations", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, landlordId, tenantId], name: "conversations_property_landlord_tenant_key")
+  @@index([landlordId], name: "conversations_landlord_idx")
+  @@index([tenantId], name: "conversations_tenant_idx")
+  @@map("conversations")
 }

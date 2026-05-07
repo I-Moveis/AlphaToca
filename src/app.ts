@@ -17,6 +17,8 @@ import chatRoutes from './routes/chatRoutes';
 import favoriteRoutes from './routes/favoriteRoutes';
 import financeRoutes from './routes/financeRoutes';
 import rentalProcessRoutes from './routes/rentalProcessRoutes';
+import conversationRoutes from './routes/conversationRoutes';
+import supportRoutes from './routes/supportRoutes';
 import { checkJwt, authSyncMiddleware, validateAuthConfig } from './middlewares/authMiddleware';
 import prisma from './config/db';
 import { queueRedisConnection } from './queues/whatsappQueue';
@@ -127,6 +129,12 @@ app.use('/api', authStack, financeRoutes);
 
 // Rental Process Routes
 app.use('/api', authStack, rentalProcessRoutes);
+
+// Conversation Routes (canonical chat thread resolve endpoint — US-012)
+app.use('/api', authStack, conversationRoutes);
+
+// Support Routes (ticket open — US-018)
+app.use('/api', authStack, supportRoutes);
 
 // Apply Global Error Handler
 app.use(errorHandler);

@@ -1,15 +1,20 @@
 import { Router } from 'express';
 import { propertyController } from '../controllers/propertyController';
+import { rentalPaymentController } from '../controllers/rentalPaymentController';
 import {
   authSyncMiddleware,
   checkJwt,
   requireRole,
 } from '../middlewares/authMiddleware';
-import { propertyPhotoUploadHandler } from '../middlewares/uploadMiddleware';
+import {
+  conditionalPropertyPhotoUploadHandler,
+  propertyPhotoUploadHandler,
+} from '../middlewares/uploadMiddleware';
 
 const router = Router();
 
 const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
+const authStack = [checkJwt, authSyncMiddleware];
 
 /**
  * @swagger
@@ -87,7 +92,7 @@ const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
  *                 example: 150.00
  *               status:
  *                 type: string
- *                 enum: [AVAILABLE, IN_NEGOTIATION, RENTED]
+ *                 enum: [AVAILABLE, NEGOTIATING, RENTED]
  *         multipart/form-data:
  *           schema:
  *             type: object
@@ -150,7 +155,7 @@ const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
  *                 example: 150.00
  *               status:
  *                 type: string
- *                 enum: [AVAILABLE, IN_NEGOTIATION, RENTED]
+ *                 enum: [AVAILABLE, NEGOTIATING, RENTED]
  *               photos:
  *                 type: array
  *                 maxItems: 20
@@ -377,6 +382,176 @@ router.put('/properties/:id/moderation', ...adminAuthStack, propertyController.m
 
 /**
  * @swagger
+ * /properties/{id}/payments/current:
+ *   get:
+ *     summary: Status do aluguel do mês corrente
+ *     description: |
+ *       Retorna o status do pagamento de aluguel para o mês corrente (YYYY-MM
+ *       calculado no servidor — o cliente nunca informa período). Apenas o
+ *       locador dono do imóvel pode ler — outros usuários autenticados recebem
+ *       403; anônimos recebem 401.
+ *
+ *       Quando ainda não há linha em `rental_payments` para (propertyId, period),
+ *       a resposta usa a MESMA forma do caminho "linha existe" com
+ *       `status=AWAITING` e `updatedAt/updatedBy=null` — sem persistir nada.
+ *       A gravação só acontece via `PUT /payments/current` (US-010, upsert).
+ *     tags: [Propriedades, Pagamentos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Status do aluguel do mês corrente (linha existente ou default AWAITING).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [period, status, updatedAt, updatedBy]
+ *               properties:
+ *                 period:
+ *                   type: string
+ *                   pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+ *                   example: '2026-05'
+ *                 status:
+ *                   type: string
+ *                   enum: [AWAITING, PAID, LATE]
+ *                 updatedAt:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
+ *                 updatedBy:
+ *                   type: string
+ *                   format: uuid
+ *                   nullable: true
+ *       401:
+ *         description: Token ausente ou inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Propriedade não encontrada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.get(
+  '/properties/:id/payments/current',
+  ...authStack,
+  rentalPaymentController.getCurrent,
+);
+
+/**
+ * @swagger
+ * /properties/{id}/payments/current:
+ *   put:
+ *     summary: Atualiza o status do aluguel do mês corrente
+ *     description: |
+ *       Upsert do status do aluguel para o imóvel indicado no mês corrente
+ *       (YYYY-MM calculado no servidor — o cliente NUNCA informa período,
+ *       para bloquear edições retroativas via API). Apenas o locador dono
+ *       do imóvel pode gravar — outros usuários autenticados recebem 403;
+ *       anônimos recebem 401.
+ *
+ *       O campo `updatedBy` é gravado a partir do `req.localUser.id` (JWT →
+ *       authSyncMiddleware); `updatedAt` é gerenciado pelo Prisma. A resposta
+ *       tem a MESMA forma de `GET /payments/current`, para reaproveitar o
+ *       renderer no frontend.
+ *     tags: [Propriedades, Pagamentos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [AWAITING, PAID, LATE]
+ *                 description: |
+ *                   Novo status do aluguel. Valores fora do enum retornam 400
+ *                   `VALIDATION_ERROR`. `period` NÃO é aceito no body — o
+ *                   servidor sempre usa o mês corrente.
+ *     responses:
+ *       200:
+ *         description: Status atualizado; resposta na mesma forma do GET.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [period, status, updatedAt, updatedBy]
+ *               properties:
+ *                 period:
+ *                   type: string
+ *                   pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+ *                   example: '2026-05'
+ *                 status:
+ *                   type: string
+ *                   enum: [AWAITING, PAID, LATE]
+ *                 updatedAt:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
+ *                 updatedBy:
+ *                   type: string
+ *                   format: uuid
+ *                   nullable: true
+ *       400:
+ *         description: Body inválido (status fora do enum, JSON malformado, etc.)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Propriedade não encontrada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.put(
+  '/properties/:id/payments/current',
+  ...authStack,
+  rentalPaymentController.updateCurrent,
+);
+
+/**
+ * @swagger
  * /properties/{id}:
  *   get:
  *     summary: Recuperar uma propriedade pelo ID
@@ -406,8 +581,25 @@ router.get('/properties/:id', propertyController.getById);
  * @swagger
  * /properties/{id}:
  *   put:
- *     summary: Atualizar uma propriedade
+ *     summary: Atualizar uma propriedade (JSON ou multipart/form-data com fotos)
+ *     description: |
+ *       Aceita dois formatos de request:
+ *       - `application/json` — atualiza apenas campos escalares; fotos existentes ficam intactas.
+ *       - `multipart/form-data` — atualiza campos escalares e envia novas fotos no campo `photos`
+ *         (JPEG ou PNG, máximo 10MB por arquivo, até 20 arquivos por request).
+ *
+ *       Apenas o locador dono do imóvel pode atualizar — qualquer outro usuário recebe 403 FORBIDDEN.
+ *       A primeira foto nova só é marcada como capa (`isCover=true`) se o imóvel ainda não tiver capa;
+ *       caso contrário, todas as novas fotos são salvas com `isCover=false` (nenhuma substituição silenciosa).
+ *
+ *       Para remover fotos existentes no mesmo request, envie `photosToRemove` (campo repetido no
+ *       multipart) com a URL exata de cada foto a remover (ex. `/uploads/<id>/<file>.jpg`). URLs que
+ *       não pertencem ao imóvel sendo editado retornam 400 `VALIDATION_ERROR` (nunca 404, para não
+ *       vazar existência de fotos de outros imóveis). Se a capa for removida, a foto existente mais
+ *       antiga é promovida automaticamente (`isCover=true`) na mesma transação.
  *     tags: [Propriedades]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -421,21 +613,87 @@ router.get('/properties/:id', propertyController.getById);
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/Property'
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               address:
+ *                 type: string
+ *               city:
+ *                 type: string
+ *               state:
+ *                 type: string
+ *               zipCode:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [AVAILABLE, NEGOTIATING, RENTED]
+ *               photos:
+ *                 type: array
+ *                 maxItems: 20
+ *                 description: |
+ *                   Arquivos de imagem (JPEG ou PNG). Máximo 20 arquivos, 10MB cada.
+ *                   A primeira foto nova será marcada como capa apenas se o imóvel ainda
+ *                   não tiver uma capa — nunca substitui a capa existente silenciosamente.
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *               photosToRemove:
+ *                 type: array
+ *                 description: |
+ *                   URLs de fotos existentes a remover (campo repetido no multipart). Cada URL deve
+ *                   pertencer AO IMÓVEL sendo editado — URLs de outras propriedades retornam 400
+ *                   `VALIDATION_ERROR`. Processado antes da inserção de novas fotos; se a capa for
+ *                   removida, a foto existente mais antiga é promovida a capa automaticamente.
+ *                 items:
+ *                   type: string
+ *                   format: uri
  *     responses:
  *       200:
- *         description: Propriedade atualizada com sucesso
+ *         description: |
+ *           Propriedade atualizada com sucesso. Quando enviada via multipart com fotos, `images`
+ *           contém a lista completa atualizada (existentes + novas).
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Property'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Property'
+ *                 - type: object
+ *                   properties:
+ *                     images:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PropertyImage'
  *       400:
- *         description: Erro de validação
+ *         description: |
+ *           Erro de validação ou de upload. O corpo usa o formato padrão `ErrorResponse`.
+ *           Códigos possíveis: `VALIDATION_ERROR`, `FILE_TOO_LARGE`, `TOO_MANY_FILES`,
+ *           `INVALID_FILE_TYPE`, `UNEXPECTED_FILE_FIELD`.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
  *       404:
  *         description: Propriedade não encontrada
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/properties/:id', propertyController.update);
+router.put(
+  '/properties/:id',
+  ...authStack,
+  conditionalPropertyPhotoUploadHandler,
+  propertyController.update,
+);
 
 /**
  * @swagger
