@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { propertyController } from '../controllers/propertyController';
+import { rentalPaymentController } from '../controllers/rentalPaymentController';
 import {
   authSyncMiddleware,
   checkJwt,
@@ -378,6 +379,80 @@ router.get('/properties/search', propertyController.search);
  *         description: Propriedade não encontrada
  */
 router.put('/properties/:id/moderation', ...adminAuthStack, propertyController.moderate);
+
+/**
+ * @swagger
+ * /properties/{id}/payments/current:
+ *   get:
+ *     summary: Status do aluguel do mês corrente
+ *     description: |
+ *       Retorna o status do pagamento de aluguel para o mês corrente (YYYY-MM
+ *       calculado no servidor — o cliente nunca informa período). Apenas o
+ *       locador dono do imóvel pode ler — outros usuários autenticados recebem
+ *       403; anônimos recebem 401.
+ *
+ *       Quando ainda não há linha em `rental_payments` para (propertyId, period),
+ *       a resposta usa a MESMA forma do caminho "linha existe" com
+ *       `status=AWAITING` e `updatedAt/updatedBy=null` — sem persistir nada.
+ *       A gravação só acontece via `PUT /payments/current` (US-010, upsert).
+ *     tags: [Propriedades, Pagamentos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Status do aluguel do mês corrente (linha existente ou default AWAITING).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [period, status, updatedAt, updatedBy]
+ *               properties:
+ *                 period:
+ *                   type: string
+ *                   pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+ *                   example: '2026-05'
+ *                 status:
+ *                   type: string
+ *                   enum: [AWAITING, PAID, LATE]
+ *                 updatedAt:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
+ *                 updatedBy:
+ *                   type: string
+ *                   format: uuid
+ *                   nullable: true
+ *       401:
+ *         description: Token ausente ou inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Propriedade não encontrada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.get(
+  '/properties/:id/payments/current',
+  ...authStack,
+  rentalPaymentController.getCurrent,
+);
 
 /**
  * @swagger
