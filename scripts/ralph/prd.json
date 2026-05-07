@@ -140,8 +140,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Two files updated. (1) src/config/swagger.ts — added new PropertyImage component schema (id/propertyId/url/isCover/caption/createdAt) and appended `images: { type:'array', items: $ref PropertyImage }` to the existing Property component so the Property schema now surfaces the relation consistently across every endpoint that references it. (2) src/routes/propertyRoutes.ts — rewrote the @swagger JSDoc for POST /properties: requestBody.content now documents BOTH application/json (preserved — same fields, plus added previously-missing condoFee/propertyTax for completeness) AND multipart/form-data (all Property fields plus `photos: { type:array, maxItems:20, items:{ type:string, format:binary } }`). Response 201 uses `allOf: [$ref Property, { properties: { images: array of PropertyImage } }]` so the images array is explicitly present. Response 400 references the ErrorResponse component and includes four worked examples (VALIDATION_ERROR, FILE_TOO_LARGE, TOO_MANY_FILES, INVALID_FILE_TYPE) matching the Portuguese message strings mandated by US-008. Response 500 also references ErrorResponse. Verified via three throwaway smoke tests (all removed before commit): (a) swagger-jsdoc parses routes/*.ts cleanly, (b) setupSwagger() runs without throwing and emits the PropertyImage $ref in the 201 response, (c) supertest GET /api-docs/ returns 200 with 'Swagger UI' in the HTML and swagger-ui-init.js references /properties. Note: swagger is mounted at /api-docs (not /docs) in src/server.ts — the PRD AC mentioned /docs 'or whatever path swagger is mounted on', so /api-docs is the correct endpoint. Typecheck passes. Test baseline unchanged at 16 pre-existing Auth0 failures / 212 pass."
     },
     {
       "id": "US-010",
