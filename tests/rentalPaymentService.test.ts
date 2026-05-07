@@ -4,6 +4,7 @@ vi.mock('../src/config/db', () => ({
   default: {
     rentalPayment: {
       findUnique: vi.fn(),
+      upsert: vi.fn(),
     },
   },
 }));
@@ -12,6 +13,7 @@ import prisma from '../src/config/db';
 import { rentalPaymentService, currentPeriod } from '../src/services/rentalPaymentService';
 
 const mockFindUnique = (prisma.rentalPayment.findUnique as any) as ReturnType<typeof vi.fn>;
+const mockUpsert = (prisma.rentalPayment.upsert as any) as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -96,5 +98,100 @@ describe('rentalPaymentService.getCurrent()', () => {
     expect(result.status).toBe('LATE');
     expect(result.updatedBy).toBeNull();
     expect(typeof result.updatedAt).toBe('string');
+  });
+});
+
+describe('rentalPaymentService.upsertCurrent()', () => {
+  const PROPERTY_ID = 'property-1';
+  const USER_ID = '22222222-2222-2222-2222-222222222222';
+
+  it('upserts using the compound-unique (propertyId, period) key and server-computed period', async () => {
+    const updatedAt = new Date('2026-05-07T12:00:00Z');
+    mockUpsert.mockResolvedValue({
+      period: '2026-05',
+      status: 'PAID',
+      updatedAt,
+      updatedBy: USER_ID,
+    });
+
+    const result = await rentalPaymentService.upsertCurrent(
+      PROPERTY_ID,
+      'PAID',
+      USER_ID,
+      new Date('2026-05-07T12:00:00Z'),
+    );
+
+    expect(result).toEqual({
+      period: '2026-05',
+      status: 'PAID',
+      updatedAt: updatedAt.toISOString(),
+      updatedBy: USER_ID,
+    });
+    expect(mockUpsert).toHaveBeenCalledWith({
+      where: {
+        rental_payments_property_period_key: {
+          propertyId: PROPERTY_ID,
+          period: '2026-05',
+        },
+      },
+      create: {
+        propertyId: PROPERTY_ID,
+        period: '2026-05',
+        status: 'PAID',
+        updatedBy: USER_ID,
+      },
+      update: {
+        status: 'PAID',
+        updatedBy: USER_ID,
+      },
+      select: {
+        period: true,
+        status: true,
+        updatedAt: true,
+        updatedBy: true,
+      },
+    });
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns ISO-serialized updatedAt from the upsert result', async () => {
+    const updatedAt = new Date('2026-11-15T09:30:00Z');
+    mockUpsert.mockResolvedValue({
+      period: '2026-11',
+      status: 'LATE',
+      updatedAt,
+      updatedBy: USER_ID,
+    });
+
+    const result = await rentalPaymentService.upsertCurrent(
+      PROPERTY_ID,
+      'LATE',
+      USER_ID,
+      new Date('2026-11-15T09:30:00Z'),
+    );
+
+    expect(result.period).toBe('2026-11');
+    expect(result.status).toBe('LATE');
+    expect(result.updatedAt).toBe(updatedAt.toISOString());
+  });
+
+  it('ignores any period the caller might hint at — always uses currentPeriod(now)', async () => {
+    mockUpsert.mockResolvedValue({
+      period: '2026-01',
+      status: 'AWAITING',
+      updatedAt: new Date('2026-01-20T00:00:00Z'),
+      updatedBy: USER_ID,
+    });
+
+    await rentalPaymentService.upsertCurrent(
+      PROPERTY_ID,
+      'AWAITING',
+      USER_ID,
+      new Date('2026-01-20T00:00:00Z'),
+    );
+
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.where.rental_payments_property_period_key.period).toBe('2026-01');
+    expect(call.create.period).toBe('2026-01');
   });
 });

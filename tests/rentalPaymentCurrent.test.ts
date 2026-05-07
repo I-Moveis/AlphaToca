@@ -13,9 +13,11 @@ const OTHER_LANDLORD_ID = '33333333-3333-3333-3333-333333333333';
 const {
   mockGetPropertyById,
   mockGetCurrent,
+  mockUpsertCurrent,
 } = vi.hoisted(() => ({
   mockGetPropertyById: vi.fn(),
   mockGetCurrent: vi.fn(),
+  mockUpsertCurrent: vi.fn(),
 }));
 
 // Same pattern as propertyUpdateMultipart: header-driven switch between "owner"
@@ -69,6 +71,7 @@ vi.mock('../src/services/rentalPaymentService', async (importOriginal) => {
     rentalPaymentService: {
       ...actual.rentalPaymentService,
       getCurrent: mockGetCurrent,
+      upsertCurrent: mockUpsertCurrent,
     },
   };
 });
@@ -176,5 +179,122 @@ describe('GET /api/properties/:id/payments/current — US-009', () => {
     expect(res.status).toBe(404);
     expect(res.body).toHaveProperty('code', 'NOT_FOUND');
     expect(mockGetCurrent).not.toHaveBeenCalled();
+  });
+});
+
+describe('PUT /api/properties/:id/payments/current — US-010', () => {
+  it('upserts and returns the full view in the same shape as GET', async () => {
+    const property = seedProperty();
+    const updatedAt = new Date('2026-05-07T12:00:00Z').toISOString();
+    mockGetPropertyById.mockResolvedValue(property);
+    mockUpsertCurrent.mockResolvedValue({
+      period: '2026-05',
+      status: 'PAID',
+      updatedAt,
+      updatedBy: LANDLORD_ID,
+    });
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}/payments/current`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .send({ status: 'PAID' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      period: '2026-05',
+      status: 'PAID',
+      updatedAt,
+      updatedBy: LANDLORD_ID,
+    });
+    // Contract: service receives (propertyId, status, userId) — never a period.
+    expect(mockUpsertCurrent).toHaveBeenCalledWith(property.id, 'PAID', LANDLORD_ID);
+  });
+
+  it('accepts AWAITING and LATE in addition to PAID', async () => {
+    const property = seedProperty();
+    mockGetPropertyById.mockResolvedValue(property);
+
+    for (const status of ['AWAITING', 'LATE'] as const) {
+      mockUpsertCurrent.mockResolvedValueOnce({
+        period: '2026-05',
+        status,
+        updatedAt: new Date('2026-05-07T12:00:00Z').toISOString(),
+        updatedBy: LANDLORD_ID,
+      });
+
+      const res = await request(app)
+        .put(`/api/properties/${property.id}/payments/current`)
+        .set('Authorization', 'Bearer landlord-owner')
+        .send({ status });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe(status);
+    }
+  });
+
+  it('returns 400 VALIDATION_ERROR for an invalid status value', async () => {
+    const property = seedProperty();
+    mockGetPropertyById.mockResolvedValue(property);
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}/payments/current`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .send({ status: 'NOT_A_REAL_STATUS' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
+    expect(mockUpsertCurrent).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 VALIDATION_ERROR when status is missing from the body', async () => {
+    const property = seedProperty();
+    mockGetPropertyById.mockResolvedValue(property);
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}/payments/current`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
+    expect(mockUpsertCurrent).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 FORBIDDEN when a non-owner attempts to update', async () => {
+    const property = seedProperty();
+    mockGetPropertyById.mockResolvedValue(property);
+
+    const res = await request(app)
+      .put(`/api/properties/${property.id}/payments/current`)
+      .set('Authorization', 'Bearer landlord-intruder')
+      .send({ status: 'PAID' });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty('code', 'FORBIDDEN');
+    expect(mockUpsertCurrent).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 UNAUTHORIZED when no Authorization header is sent', async () => {
+    const res = await request(app)
+      .put(`/api/properties/${randomUUID()}/payments/current`)
+      .send({ status: 'PAID' });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty('code', 'UNAUTHORIZED');
+    expect(mockGetPropertyById).not.toHaveBeenCalled();
+    expect(mockUpsertCurrent).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 NOT_FOUND when the property does not exist', async () => {
+    mockGetPropertyById.mockResolvedValue(null);
+
+    const res = await request(app)
+      .put(`/api/properties/${randomUUID()}/payments/current`)
+      .set('Authorization', 'Bearer landlord-owner')
+      .send({ status: 'PAID' });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty('code', 'NOT_FOUND');
+    expect(mockUpsertCurrent).not.toHaveBeenCalled();
   });
 });

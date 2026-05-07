@@ -456,6 +456,102 @@ router.get(
 
 /**
  * @swagger
+ * /properties/{id}/payments/current:
+ *   put:
+ *     summary: Atualiza o status do aluguel do mês corrente
+ *     description: |
+ *       Upsert do status do aluguel para o imóvel indicado no mês corrente
+ *       (YYYY-MM calculado no servidor — o cliente NUNCA informa período,
+ *       para bloquear edições retroativas via API). Apenas o locador dono
+ *       do imóvel pode gravar — outros usuários autenticados recebem 403;
+ *       anônimos recebem 401.
+ *
+ *       O campo `updatedBy` é gravado a partir do `req.localUser.id` (JWT →
+ *       authSyncMiddleware); `updatedAt` é gerenciado pelo Prisma. A resposta
+ *       tem a MESMA forma de `GET /payments/current`, para reaproveitar o
+ *       renderer no frontend.
+ *     tags: [Propriedades, Pagamentos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [AWAITING, PAID, LATE]
+ *                 description: |
+ *                   Novo status do aluguel. Valores fora do enum retornam 400
+ *                   `VALIDATION_ERROR`. `period` NÃO é aceito no body — o
+ *                   servidor sempre usa o mês corrente.
+ *     responses:
+ *       200:
+ *         description: Status atualizado; resposta na mesma forma do GET.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [period, status, updatedAt, updatedBy]
+ *               properties:
+ *                 period:
+ *                   type: string
+ *                   pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+ *                   example: '2026-05'
+ *                 status:
+ *                   type: string
+ *                   enum: [AWAITING, PAID, LATE]
+ *                 updatedAt:
+ *                   type: string
+ *                   format: date-time
+ *                   nullable: true
+ *                 updatedBy:
+ *                   type: string
+ *                   format: uuid
+ *                   nullable: true
+ *       400:
+ *         description: Body inválido (status fora do enum, JSON malformado, etc.)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Propriedade não encontrada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.put(
+  '/properties/:id/payments/current',
+  ...authStack,
+  rentalPaymentController.updateCurrent,
+);
+
+/**
+ * @swagger
  * /properties/{id}:
  *   get:
  *     summary: Recuperar uma propriedade pelo ID
