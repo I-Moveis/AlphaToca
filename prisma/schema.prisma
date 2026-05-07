@@ -137,6 +137,7 @@ model User {
   conversationsAsTenant   Conversation[] @relation("TenantConversations")
   supportTicketsOpened    SupportTicket[] @relation("SupportTicketOpener")
   supportTicketsAssigned  SupportTicket[] @relation("SupportTicketAssignee")
+  profileViewsReceived    ProfileView[]   @relation("LandlordProfileViews")
 
   @@map("users")
 }
@@ -568,4 +569,21 @@ model Conversation {
   @@index([landlordId], name: "conversations_landlord_idx")
   @@index([tenantId], name: "conversations_tenant_idx")
   @@map("conversations")
+}
+
+// Registro de aberturas do perfil público de um landlord. Usado pelo card
+// "Visitas ao perfil" do dashboard (GET /api/landlord/metrics, LL-002) que
+// conta linhas dos últimos 30 dias. `viewerId` é nulo para visitantes anônimos;
+// quando não nulo, o service aplica dedup de 24h (LL-001) para não inflar o
+// contador com F5 do mesmo usuário logado.
+model ProfileView {
+  id         String   @id @default(uuid())
+  landlordId String   @map("landlord_id")
+  viewerId   String?  @map("viewer_id")
+  viewedAt   DateTime @default(now()) @map("viewed_at")
+
+  landlord User @relation("LandlordProfileViews", fields: [landlordId], references: [id], onDelete: Cascade)
+
+  @@index([landlordId, viewedAt], name: "profile_views_landlord_time_idx")
+  @@map("profile_views")
 }

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { propertyService, PropertyError } from '../services/propertyService';
+import { profileViewService } from '../services/profileViewService';
 import {
   createPropertySchema,
   moderatePropertySchema,
@@ -49,6 +50,15 @@ export const propertyController = {
           code: 'NOT_FOUND',
           messages: [{ message: 'Property not found' }]
         });
+      }
+
+      // LL-001: o card "Visitas ao perfil" do dashboard do landlord conta
+      // aberturas do perfil público nos últimos 30 dias. O frontend marca o
+      // request com ?inspectLandlord=true quando o tenant está olhando o
+      // locador a partir da ficha do imóvel. Fire-and-forget: nunca bloqueia
+      // a resposta da propriedade.
+      if (req.query.inspectLandlord === 'true') {
+        void profileViewService.record(property.landlordId, req.localUser?.id ?? null);
       }
 
       return res.status(200).json(property);
