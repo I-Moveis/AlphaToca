@@ -308,14 +308,68 @@ export const propertyService = {
     return { ...rest, currentTenant: extractCurrentTenant(contracts) };
   },
 
-  async updateProperty(id: string, data: UpdatePropertyInput): Promise<Property | null> {
-    const exists = await prisma.property.findUnique({ where: { id } });
+  async updateProperty(
+    id: string,
+    data: UpdatePropertyInput,
+    files?: Express.Multer.File[],
+  ): Promise<PropertyWithImages | null> {
+    const exists = await prisma.property.findUnique({
+      where: { id },
+      include: { images: true },
+    });
     if (!exists) return null;
 
-    return prisma.property.update({
-      where: { id },
-      data,
-    });
+    // Caminho legado JSON / multipart sem fotos novas: mantém o contrato anterior
+    // (nenhuma escrita em PropertyImage, nenhum side-effect em disco).
+    if (!files || files.length === 0) {
+      return prisma.property.update({
+        where: { id },
+        data,
+        include: { images: true },
+      });
+    }
+
+    // Se já existe capa, todas as novas fotos ficam com isCover=false — nunca
+    // substituímos a capa silenciosamente na edição. Só promovemos a primeira
+    // foto a capa quando o imóvel não tem nenhuma ainda.
+    const hasExistingCover = exists.images.some((img) => img.isCover);
+
+    let savedUrls: string[] = [];
+
+    try {
+      return await prisma.$transaction(async (tx) => {
+        await tx.property.update({
+          where: { id },
+          data,
+        });
+
+        const saved = await savePropertyImages(id, files);
+        savedUrls = saved.map((s) => s.url);
+
+        await tx.propertyImage.createMany({
+          data: saved.map((s, idx) => ({
+            propertyId: id,
+            url: s.url,
+            isCover: !hasExistingCover && idx === 0,
+          })),
+        });
+
+        return tx.property.findUniqueOrThrow({
+          where: { id },
+          include: { images: true },
+        });
+      });
+    } catch (error) {
+      if (savedUrls.length > 0) {
+        await cleanupPropertyImages(id, savedUrls).catch((cleanupErr) => {
+          logger.error(
+            { err: cleanupErr, propertyId: id },
+            '[propertyService] Failed to cleanup uploaded images after updateProperty rollback',
+          );
+        });
+      }
+      throw error;
+    }
   },
 
   async deleteProperty(id: string): Promise<boolean> {

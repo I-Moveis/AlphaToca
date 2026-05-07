@@ -10,6 +10,8 @@ process.env.FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY || 'test-key
 // POST → PUT → GET /:id → GET /search and verify status round-trips.
 const store = new Map<string, any>();
 
+const LANDLORD_ID = '11111111-1111-1111-1111-111111111111';
+
 const { mockCreateProperty, mockUpdateProperty, mockGetPropertyById, mockSearchProperties } =
   vi.hoisted(() => ({
     mockCreateProperty: vi.fn(),
@@ -17,6 +19,32 @@ const { mockCreateProperty, mockUpdateProperty, mockGetPropertyById, mockSearchP
     mockGetPropertyById: vi.fn(),
     mockSearchProperties: vi.fn(),
   }));
+
+// US-006 added auth (checkJwt + authSyncMiddleware) to PUT /properties/:id.
+// Replace the middleware so tests here can drive the endpoint without a real
+// Firebase token; localUser.id is set to LANDLORD_ID so the ownership guard
+// in the controller passes against properties created with that landlordId.
+vi.mock('../src/middlewares/authMiddleware', () => ({
+  validateAuthConfig: () => {},
+  checkJwt: (req: any, _res: any, next: any) => {
+    req.auth = { payload: { uid: 'firebase-uid-demo-landlord-1' } };
+    return next();
+  },
+  authSyncMiddleware: (req: any, _res: any, next: any) => {
+    req.localUser = {
+      id: LANDLORD_ID,
+      firebaseUid: 'firebase-uid-demo-landlord-1',
+      name: 'Demo Landlord',
+      email: 'landlord1@demo.com',
+      phoneNumber: '+5511999999001',
+      role: 'LANDLORD',
+      fcmToken: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    next();
+  },
+  requireRole: () => (_req: any, _res: any, next: any) => next(),
+}));
 
 vi.mock('../src/services/propertyService', async (importOriginal) => {
   const actual = (await importOriginal()) as any;
@@ -34,8 +62,6 @@ vi.mock('../src/services/propertyService', async (importOriginal) => {
 
 import request from 'supertest';
 import app from '../src/app';
-
-const LANDLORD_ID = '11111111-1111-1111-1111-111111111111';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -112,6 +138,7 @@ describe('Property.status round-trip (US-003)', () => {
     expect(mockUpdateProperty).toHaveBeenCalledWith(
       propertyId,
       expect.objectContaining({ status: 'NEGOTIATING' }),
+      undefined,
     );
 
     // GET /:id reflects the update

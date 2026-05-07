@@ -5,11 +5,15 @@ import {
   checkJwt,
   requireRole,
 } from '../middlewares/authMiddleware';
-import { propertyPhotoUploadHandler } from '../middlewares/uploadMiddleware';
+import {
+  conditionalPropertyPhotoUploadHandler,
+  propertyPhotoUploadHandler,
+} from '../middlewares/uploadMiddleware';
 
 const router = Router();
 
 const adminAuthStack = [checkJwt, authSyncMiddleware, requireRole('ADMIN')];
+const authStack = [checkJwt, authSyncMiddleware];
 
 /**
  * @swagger
@@ -406,8 +410,19 @@ router.get('/properties/:id', propertyController.getById);
  * @swagger
  * /properties/{id}:
  *   put:
- *     summary: Atualizar uma propriedade
+ *     summary: Atualizar uma propriedade (JSON ou multipart/form-data com fotos)
+ *     description: |
+ *       Aceita dois formatos de request:
+ *       - `application/json` — atualiza apenas campos escalares; fotos existentes ficam intactas.
+ *       - `multipart/form-data` — atualiza campos escalares e envia novas fotos no campo `photos`
+ *         (JPEG ou PNG, máximo 10MB por arquivo, até 20 arquivos por request).
+ *
+ *       Apenas o locador dono do imóvel pode atualizar — qualquer outro usuário recebe 403 FORBIDDEN.
+ *       A primeira foto nova só é marcada como capa (`isCover=true`) se o imóvel ainda não tiver capa;
+ *       caso contrário, todas as novas fotos são salvas com `isCover=false` (nenhuma substituição silenciosa).
  *     tags: [Propriedades]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -421,21 +436,77 @@ router.get('/properties/:id', propertyController.getById);
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/Property'
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               address:
+ *                 type: string
+ *               city:
+ *                 type: string
+ *               state:
+ *                 type: string
+ *               zipCode:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [AVAILABLE, NEGOTIATING, RENTED]
+ *               photos:
+ *                 type: array
+ *                 maxItems: 20
+ *                 description: |
+ *                   Arquivos de imagem (JPEG ou PNG). Máximo 20 arquivos, 10MB cada.
+ *                   A primeira foto nova será marcada como capa apenas se o imóvel ainda
+ *                   não tiver uma capa — nunca substitui a capa existente silenciosamente.
+ *                 items:
+ *                   type: string
+ *                   format: binary
  *     responses:
  *       200:
- *         description: Propriedade atualizada com sucesso
+ *         description: |
+ *           Propriedade atualizada com sucesso. Quando enviada via multipart com fotos, `images`
+ *           contém a lista completa atualizada (existentes + novas).
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Property'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Property'
+ *                 - type: object
+ *                   properties:
+ *                     images:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PropertyImage'
  *       400:
- *         description: Erro de validação
+ *         description: |
+ *           Erro de validação ou de upload. O corpo usa o formato padrão `ErrorResponse`.
+ *           Códigos possíveis: `VALIDATION_ERROR`, `FILE_TOO_LARGE`, `TOO_MANY_FILES`,
+ *           `INVALID_FILE_TYPE`, `UNEXPECTED_FILE_FIELD`.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido
+ *       403:
+ *         description: Usuário autenticado não é o dono do imóvel
  *       404:
  *         description: Propriedade não encontrada
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/properties/:id', propertyController.update);
+router.put(
+  '/properties/:id',
+  ...authStack,
+  conditionalPropertyPhotoUploadHandler,
+  propertyController.update,
+);
 
 /**
  * @swagger

@@ -1,5 +1,5 @@
 import multer, { FileFilterCallback } from 'multer';
-import { Request } from 'express';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_COUNT = 20;
@@ -30,3 +30,19 @@ export const propertyPhotoUploadHandler = propertyPhotoUpload.array(
   'photos',
   MAX_FILE_COUNT,
 );
+
+// PUT /properties/:id aceita application/json (caminho legado) E multipart/form-data
+// (novo caminho para adicionar fotos via edição). Multer consome o stream do request,
+// então só pode rodar quando o Content-Type é multipart — em JSON, ele derrubaria o
+// body parser. Este wrapper despacha apenas quando o header bate.
+export const conditionalPropertyPhotoUploadHandler: RequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const contentType = req.headers['content-type'] ?? '';
+  if (contentType.toLowerCase().startsWith('multipart/form-data')) {
+    return propertyPhotoUploadHandler(req, res, next);
+  }
+  return next();
+};
