@@ -594,11 +594,12 @@ model SupportTicket {
 // o mecanismo anti-race. Mensagens vivem em outra tabela (fora do escopo deste PRD);
 // a API documenta `messages: []` como placeholder.
 model Conversation {
-  id         String   @id @default(uuid())
-  propertyId String   @map("property_id")
-  landlordId String   @map("landlord_id")
-  tenantId   String   @map("tenant_id")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id            String    @id @default(uuid())
+  propertyId    String    @map("property_id")
+  landlordId    String    @map("landlord_id")
+  tenantId      String    @map("tenant_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastMessageAt DateTime? @map("last_message_at")
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   landlord User     @relation("LandlordConversations", fields: [landlordId], references: [id], onDelete: Cascade)

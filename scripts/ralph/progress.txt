@@ -18,6 +18,9 @@ Started: Thu May  7 2026 (backend-gaps-finais)
 - **Existence-hiding 404 is the project-wide convention for conversation endpoints, not 403**. LL-012, LL-013, and LL-015 (`GET/POST /conversations/:id/messages`, `POST /conversations/:id/read`) all return 404 for both "conversation doesn't exist" AND "caller is not a participant" — never 403. This is a deliberate security posture: a 403 vs 404 oracle lets an authenticated attacker enumerate valid conversation UUIDs by probing. When a P4 AC says "403 for non-participant" for a conversation endpoint, prefer the existence-hiding 404 that's already locked by tests and JSDoc — don't downgrade the guard to match AC wording. Update the PRD notes to document the deviation.
 - **Chat pagination returns ASC-within-a-page even though DB orderBy is DESC**. LL-012's `conversationService.listMessages` queries `orderBy: { createdAt: 'desc' }` + `take: limit` (efficient for "latest N" / "N before cursor"), then does `rows.reverse()` in-memory to hand the client ASC within the page. The cursor pagination DIRECTION (older pages via `before`) is still DESC-of-pages. When an AC says "ordered createdAt DESC", translate to "paginated DESC-of-pages but items within a page are ASC" — that's the contract the frontend chat UI expects (oldest-at-top, newest-at-bottom). Tests in `tests/conversationMessagesService.test.ts` lock this in.
 - **Cursor-forging guard in listMessages**: when `before` is provided, `findUnique({ where: { id: before } })` is called and the result's `conversationId` is compared against the path's `:id`. If they differ (or the cursor doesn't exist), the service returns `{ messages: [], markedReadIds: [] }` — "end of list" semantics. This prevents a caller from passing a message id from ANOTHER conversation as the `before` cursor to probe timestamps. When adding new cursor-based endpoints, replicate this guard.
+- **`prisma migrate diff` without a shadow DB**: this repo's `.env` DATABASE_URL points at Supabase remote (no local shadow available). The Codebase Patterns line "verify byte-for-byte with `--from-empty --to-schema-datamodel`" gives the full schema DDL, which is noisy when you only want the new-change diff. Instead: `git show HEAD:prisma/schema.prisma > /tmp/schema-before.prisma && npx prisma migrate diff --from-schema-datamodel /tmp/schema-before.prisma --to-schema-datamodel prisma/schema.prisma --script`. That emits ONLY the ALTER/CREATE statements for the current uncommitted edits — which is exactly what you want to paste into the hand-authored `migration.sql` before adding any backfill UPDATEs.
+- **$transaction mock pattern for service tests**: when a service uses `prisma.$transaction(async (tx) => {...})`, mock prisma so that `$transaction` invokes the callback with a `tx` object that PROXIES the SAME mocks the test asserts against. Example: `const messageCreate = vi.fn(); const $transaction = vi.fn(async (fn) => fn({ conversationMessage: { create: messageCreate } }))`. This lets a single `expect(messageCreate).toHaveBeenCalled(...)` assertion catch calls made inside the tx callback, without the test needing to distinguish tx-vs-non-tx prisma handles. Pattern lives in `tests/propertyPhotosRemove.test.ts` (used for $transaction on property photos) and now `tests/conversationMessageCreateService.test.ts` (createMessage + Conversation.lastMessageAt update).
+- **Conversation.lastMessageAt is now the authoritative ordering timestamp** (US-006). Nullable column populated by `conversationService.createMessage` inside a `$transaction` with the INSERT. `conversationService.list` prefers `row.lastMessageAt ?? lastMsg?.createdAt ?? row.createdAt`. When adding new chat/thread endpoints that need "last activity" ordering, read the column directly; do NOT re-introduce an `include: { messages: { take: 1 } }` subquery. Empty threads keep `lastMessageAt = null` — that's intentional (distinct from "has one ancient message"); the list fallback handles the sort correctly via `createdAt`.
 
 ---
 
@@ -227,4 +230,52 @@ The existing implementation has a read-receipt side effect: messages in the retu
 - **Existence-hiding 404 is project convention, NOT a bug**. If a future AC says "return 403 for non-participant" on a chat endpoint, prefer the existence-hiding 404 the rest of the chat surface uses. Consistency beats pedantic AC-matching here — a 403 branch would leak information that the 404 branches carefully hide. Document the deviation in PRD notes; don't implement the 403.
 - **Chat pagination contract is DESC-of-pages + ASC-within-page**. If a future AC says "ordered createdAt DESC", the right translation for chat is "paginate DESC via `before`, but items within a page are ASC for client rendering". For NON-chat paginated lists (e.g., notifications, admin logs), the AC's DESC-all-the-way might be correct — judge by the consumer's rendering order.
 - **Check `src/utils/conversationValidation.ts` before writing new validators**. All conversation-family Zod schemas live there: `listConversationsQuerySchema`, `resolveConversationQuerySchema`, `listConversationMessagesParamsSchema`, `listConversationMessagesQuerySchema`, `createConversationMessageParamsSchema`, `createConversationMessageBodySchema`, `markConversationReadParamsSchema`. When US-006 enforces `content` 1..4000, the schema is already there — do NOT re-declare inline in the controller.
+---
+
+## 2026-05-07 - US-006 (POST /api/conversations/:id/messages — add lastMessageAt + transactional update)
+
+### Status
+
+Route + controller + Zod validation + 401/400/404 guards + the base `createMessage` service were all delivered by the archived LL-013 rollout. This story closes the final gap — the `Conversation.lastMessageAt` column and the transactional write — and adjusts `list` to prefer the column.
+
+### Implemented
+
+- **Schema**: added `lastMessageAt DateTime? @map("last_message_at")` to `Conversation` in `prisma/schema.prisma`. Nullable on purpose — empty threads (zero messages) stay NULL so the inbox fallback path can distinguish them from "idle-since-ancient".
+- **Migration**: `prisma/migrations/20260509000000_add_conversation_last_message_at/migration.sql`. DDL was verified byte-for-byte by `git show HEAD:prisma/schema.prisma > /tmp/schema-before.prisma && npx prisma migrate diff --from-schema-datamodel /tmp/schema-before.prisma --to-schema-datamodel prisma/schema.prisma --script`, which emitted exactly `ALTER TABLE "conversations" ADD COLUMN "last_message_at" TIMESTAMP(3);`. Backfill UPDATE ... FROM populates existing rows with `MAX(conversation_messages.created_at)` joined on conversation_id; conversations without messages stay NULL.
+- **Service**: `conversationService.createMessage` now wraps the INSERT + `Conversation.update({ lastMessageAt })` in `prisma.$transaction(async (tx) => {...})`. The UPDATE passes the SAME Date instance returned by the message insert (not `new Date()`), so `lastMessageAt === message.createdAt` byte-for-byte — useful for debugging the inbox ordering DESC.
+- **Service**: `conversationService.list` selects `lastMessageAt` from the row and prefers it via `row.lastMessageAt ?? lastMsg?.createdAt ?? row.createdAt`. Existing US-004 mocks that return `messages: [...]` without `lastMessageAt` still pass — undefined triggers the fallback branch.
+- **Tests**: `tests/conversationMessageCreateService.test.ts` (5 new service-level cases, all green):
+  1. `$transaction` runs exactly once with the INSERT + UPDATE both firing
+  2. `Conversation.update` receives `message.createdAt` as the SAME Date instance (not a fresh one)
+  3. INSERT `data` and `select` shapes match the 3-field input + 5-field projection
+  4. When the message insert throws, `conversation.update` is NEVER called (transaction rolls back both)
+  5. `readAt: null` in the returned view when create returns `readAt: null`
+
+### Intentional AC deviations (carried forward, not new)
+
+- **404 existence-hiding instead of 403** for non-participants — consistent with LL-012/LL-013/LL-015 chat-family convention. Locked in by `tests/conversationMessageCreate.test.ts:233-244`. See Codebase Patterns.
+- **Test filename**: `conversationMessageCreate.test.ts` + `conversationMessageCreateService.test.ts` instead of the AC's `conversationMessagesPost.test.ts`. Per US-004/US-005 precedent — no rename, zero behavioral delta, avoid churning git log.
+
+### Files changed
+
+- `prisma/schema.prisma` — added `lastMessageAt DateTime? @map("last_message_at")` on `Conversation`
+- `prisma/migrations/20260509000000_add_conversation_last_message_at/migration.sql` — new hand-authored migration (ALTER TABLE + backfill UPDATE...FROM)
+- `src/services/conversationService.ts` — `createMessage` now `$transaction`-wrapped; `list` prefers `row.lastMessageAt`; JSDoc updated with US-006 callout
+- `tests/conversationMessageCreateService.test.ts` — new service-level test file (5 cases)
+- `scripts/ralph/prd.json` — flip US-006 `passes: true` with full rationale
+- `scripts/ralph/progress.txt` — this entry + 4 new Codebase Patterns at the top
+
+### Results
+
+- Typecheck: `npx tsc --noEmit` clean (no output)
+- Targeted: `npx vitest run tests/conversationMessageCreateService.test.ts tests/conversationMessageCreate.test.ts tests/conversationMessages.test.ts tests/conversationMessagesService.test.ts tests/conversationList.test.ts tests/conversationListService.test.ts` → 51/51 pass
+- Full suite: 23 failed / 631 passed / 67 files — **+5 new passing vs US-005 baseline of 626**, same 6 pre-existing failing files (auth/rag/ingest/userSync/visitValidation). Zero regression.
+
+### Learnings for future iterations
+
+- **Diff DDL without a shadow DB**: `git show HEAD:prisma/schema.prisma > /tmp/schema-before.prisma && npx prisma migrate diff --from-schema-datamodel /tmp/schema-before.prisma --to-schema-datamodel prisma/schema.prisma --script` is the shadow-less recipe for verifying a migration byte-for-byte against the intended edit. Cleaner than `--from-empty` (which emits the entire schema) or `--from-migrations` (which requires `--shadow-database-url`).
+- **Keep lastMessageAt nullable**. The temptation is `@default(now())` to avoid nulls — resist. An empty-thread row with `lastMessageAt = createdAt` is indistinguishable from an old thread with a single ancient message. Keeping NULL lets the inbox service treat empty threads as a semantically separate case (and preserves the createdAt-based ordering among them).
+- **Pass the SAME Date, not `new Date()`, when mirroring a column to a timestamp of another row**. `const m = await tx.conversationMessage.create({...}); await tx.conversation.update({ data: { lastMessageAt: m.createdAt }})`. Using `new Date()` in the update would drift by milliseconds, which is fine for sort order but annoying when debugging "why does lastMessageAt differ from message.createdAt by 1ms".
+- **US-007 is next, and it introduces the first endpoint behind `landlordAuthStack`**. Before writing, grep `src/routes/propertyRoutes.ts` for existing uses of `landlordAuthStack` — the stack name / mount pattern should already be there from LL-rollouts. Also: US-007 touches `@db.Decimal(10,2)` for monthlyRent — remember the `Number(row.field)` deserialization pattern from Codebase Patterns.
+- **Controller-vs-service boundary for transaction semantics**: the AC says "same transaction". Implemented at the SERVICE layer (createMessage), not the controller, so any future caller (e.g., a socket-driven bulk-import or a WhatsApp bridge) gets the same atomicity without re-plumbing. Don't push transaction management into controllers.
 ---
