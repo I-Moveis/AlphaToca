@@ -4,6 +4,7 @@ import {
   getContractById,
   listLandlordTenants,
   listTenantContracts,
+  updateContractStatus,
   updatePaymentStatus,
   ContractError
 } from '../services/contractService';
@@ -85,6 +86,19 @@ export const contractController = {
       const payment = await updatePaymentStatus(req.params.paymentId, input.status, input.paidDate);
       return res.status(200).json(payment);
     } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const input = updateContractStatusSchema.parse(req.body);
+      const contract = await updateContractStatus(req.params.id, input.status);
+      return res.status(200).json(contract);
+    } catch (err) {
+      if (err instanceof ContractError) {
+        return handleContractError(err, res, next);
+      }
       next(err);
     }
   }

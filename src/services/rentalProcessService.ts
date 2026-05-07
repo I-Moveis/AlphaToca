@@ -44,6 +44,13 @@ export const rentalProcessService = {
    * Gatilhos de notificação:
    * - Qualquer avanço de etapa → RENTAL_STAGE_CHANGED (inquilino)
    * - Status → CLOSED          → RENTAL_CLOSED (inquilino + locador do imóvel)
+   *
+   * Efeito colateral de lifecycle (US-005):
+   *   quando o processo transita para CLOSED (estado terminal) e o imóvel
+   *   ainda estava em negociação (NEGOTIATING) sem contrato ativo, a mesma
+   *   transação devolve Property.status para AVAILABLE. Se o imóvel já estiver
+   *   RENTED (contrato ACTIVE), a limpeza fica a cargo de
+   *   contractService.updateContractStatus.
    */
   async updateStatus(id: string, newStatus: ProcessStatus): Promise<RentalProcess | null> {
     const existing = await prisma.rentalProcess.findUnique({
@@ -52,7 +59,9 @@ export const rentalProcessService = {
         tenant: { select: { id: true, fcmToken: true } },
         property: {
           select: {
+            id: true,
             title: true,
+            status: true,
             landlord: { select: { id: true, fcmToken: true } },
           },
         },
@@ -62,9 +71,25 @@ export const rentalProcessService = {
     if (!existing) return null;
     if (existing.status === newStatus) return existing; // sem mudança, sem notificação
 
-    const updated = await prisma.rentalProcess.update({
-      where: { id },
-      data: { status: newStatus },
+    const shouldReleaseProperty =
+      newStatus === 'CLOSED' &&
+      existing.property?.id !== undefined &&
+      existing.property?.status === 'NEGOTIATING';
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedRp = await tx.rentalProcess.update({
+        where: { id },
+        data: { status: newStatus },
+      });
+
+      if (shouldReleaseProperty && existing.property) {
+        await tx.property.update({
+          where: { id: existing.property.id },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+
+      return updatedRp;
     });
 
     const stageLabel = STAGE_LABELS[newStatus];

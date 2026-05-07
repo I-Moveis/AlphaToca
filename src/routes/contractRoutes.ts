@@ -54,6 +54,43 @@ router.get('/contracts/:id', contractController.getById);
 
 /**
  * @swagger
+ * /contracts/{id}/status:
+ *   patch:
+ *     summary: Atualiza o status do contrato (ACTIVE | TERMINATED | COMPLETED)
+ *     description: |
+ *       Atualiza `Contract.status`. Como efeito colateral, `Property.status` é
+ *       ajustado na **mesma transação** para manter a consistência lifecycle:
+ *       - ACTIVE → TERMINATED/COMPLETED: `Property.status` volta para `AVAILABLE`.
+ *       - qualquer terminal → ACTIVE: `Property.status` passa a `RENTED`
+ *         (rejeita com 409 `RENTAL_PROCESS_ALREADY_ACTIVE` se já houver outro
+ *         contrato ACTIVE para o imóvel).
+ *     tags: [Contratos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: 'string', format: 'uuid' }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status: { type: 'string', enum: [ACTIVE, TERMINATED, COMPLETED] }
+ *     responses:
+ *       200:
+ *         description: Contrato atualizado com sucesso
+ *       404: { description: Contrato não encontrado }
+ *       409: { description: Outro contrato já está ACTIVE para este imóvel }
+ */
+router.patch('/contracts/:id/status', contractController.updateStatus);
+
+/**
+ * @swagger
  * /tenants:
  *   get:
  *     summary: Lista inquilinos de um proprietário

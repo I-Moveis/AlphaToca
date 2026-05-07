@@ -12,10 +12,27 @@ export class ContractError extends Error {
   }
 }
 
+const TERMINAL_CONTRACT_STATUSES: ContractStatus[] = ['TERMINATED', 'COMPLETED'];
+
 export async function createContract(data: any) {
   const { propertyId, tenantId, landlordId, startDate, endDate, monthlyRent, dueDay, contractUrl } = data;
 
   return prisma.$transaction(async (tx) => {
+    // Guard: exactly one ACTIVE contract allowed per property. Any attempt to
+    // activate a second rental while one is already active throws 409 and
+    // rolls back the entire transaction — no partial Property.status write.
+    const existingActive = await tx.contract.findFirst({
+      where: { propertyId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (existingActive) {
+      throw new ContractError(
+        409,
+        'RENTAL_PROCESS_ALREADY_ACTIVE',
+        'There is already an active rental for this property',
+      );
+    }
+
     // 1. Create the contract
     const contract = await tx.contract.create({
       data: {
@@ -36,13 +53,79 @@ export async function createContract(data: any) {
       }
     });
 
-    // 2. Update property status to RENTED
+    // 2. Update property status to RENTED in the SAME transaction — if this
+    // tx is rolled back by a later failure, Property.status reverts too.
     await tx.property.update({
       where: { id: propertyId },
       data: { status: 'RENTED' }
     });
 
     return contract;
+  });
+}
+
+export async function updateContractStatus(id: string, newStatus: ContractStatus) {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.contract.findUnique({
+      where: { id },
+      select: { id: true, status: true, propertyId: true },
+    });
+
+    if (!existing) {
+      throw new ContractError(404, 'CONTRACT_NOT_FOUND', 'Contract not found');
+    }
+
+    if (existing.status === newStatus) {
+      // no-op status write — still return the contract shape so the controller
+      // can respond 200 consistently.
+      return tx.contract.findUnique({
+        where: { id },
+        include: { property: true, tenant: true, landlord: true },
+      });
+    }
+
+    // Re-activation guard: if transitioning FROM a terminal status BACK TO
+    // ACTIVE, enforce the same single-active-contract invariant.
+    if (newStatus === 'ACTIVE' && existing.status !== 'ACTIVE') {
+      const otherActive = await tx.contract.findFirst({
+        where: {
+          propertyId: existing.propertyId,
+          status: 'ACTIVE',
+          id: { not: id },
+        },
+        select: { id: true },
+      });
+      if (otherActive) {
+        throw new ContractError(
+          409,
+          'RENTAL_PROCESS_ALREADY_ACTIVE',
+          'There is already an active rental for this property',
+        );
+      }
+    }
+
+    const updated = await tx.contract.update({
+      where: { id },
+      data: { status: newStatus },
+      include: { property: true, tenant: true, landlord: true },
+    });
+
+    // Auto-transition Property.status in the same transaction:
+    //   ACTIVE        → terminal (TERMINATED/COMPLETED): property → AVAILABLE
+    //   non-ACTIVE    → ACTIVE                          : property → RENTED
+    if (existing.status === 'ACTIVE' && TERMINAL_CONTRACT_STATUSES.includes(newStatus)) {
+      await tx.property.update({
+        where: { id: existing.propertyId },
+        data: { status: 'AVAILABLE' },
+      });
+    } else if (newStatus === 'ACTIVE' && existing.status !== 'ACTIVE') {
+      await tx.property.update({
+        where: { id: existing.propertyId },
+        data: { status: 'RENTED' },
+      });
+    }
+
+    return updated;
   });
 }
 
@@ -72,10 +155,10 @@ export async function listLandlordTenants(landlordId: string) {
     include: {
       contractsAsTenant: {
         where: { landlordId, status: 'ACTIVE' },
-        include: { 
+        include: {
           property: {
             select: { id: true, title: true, address: true }
-          } 
+          }
         }
       }
     }
@@ -104,7 +187,7 @@ export async function listTenantContracts(tenantId: string) {
 export async function updatePaymentStatus(paymentId: string, status: PaymentStatus, paidDate?: string) {
   return prisma.tenantPayment.update({
     where: { id: paymentId },
-    data: { 
+    data: {
       status,
       paidDate: paidDate ? new Date(paidDate) : undefined
     }

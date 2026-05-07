@@ -62,7 +62,13 @@ const options: swaggerJsdoc.Options = {
             title: { type: 'string', minLength: 3, example: 'Apartamento Decorado Centro' },
             description: { type: 'string', minLength: 10, example: 'Lindo apartamento com 2 quartos e varanda gourmet.' },
             price: { type: 'number', minimum: 0, example: 2500.00 },
-            status: { type: 'string', enum: ['AVAILABLE', 'NEGOTIATING', 'RENTED'], default: 'AVAILABLE' },
+            status: {
+              type: 'string',
+              enum: ['AVAILABLE', 'NEGOTIATING', 'RENTED'],
+              default: 'AVAILABLE',
+              description:
+                'Pode ser alterado como efeito colateral de endpoints do ciclo de locação: criar um Contract (POST /contracts) muda para RENTED; terminar um Contract (PATCH /contracts/{id}/status para TERMINATED/COMPLETED) volta para AVAILABLE; encerrar um RentalProcess em negociação (PATCH /rental-process/{id}/status para CLOSED) também libera para AVAILABLE. Todas as mutações ocorrem na mesma transação da mudança de status do processo/contrato.',
+            },
             address: { type: 'string', minLength: 5, example: 'Rua das Flores, 123, São Paulo - SP' },
             type: { type: 'string', enum: ['APARTMENT', 'HOUSE', 'STUDIO', 'CONDO_HOUSE'], default: 'APARTMENT' },
             bedrooms: { type: 'integer', minimum: 0, example: 2 },
