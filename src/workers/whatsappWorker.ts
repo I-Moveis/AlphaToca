@@ -12,6 +12,7 @@ import { propertyService } from '../services/propertyService';
 import type { PropertySearchInput } from '../utils/searchValidation';
 import { logger, type Logger } from '../config/logger';
 import { checkPhoneRateLimit, type PhoneRateLimitResult } from '../utils/phoneRateLimiter';
+import { whatsappRegistration } from '../services/whatsappRegistrationService';
 
 export const RAG_ERROR_FALLBACK =
     'Desculpe, tive um problema técnico para responder agora. Um de nossos atendentes humanos vai continuar esse atendimento em instantes.';
@@ -243,14 +244,45 @@ export async function handleWhatsappMessage(
         },
     });
 
+    // Cadastro rápido via WhatsApp: se usuário não tem email e mandou
+    // um email, registra e confirma. Se for novo e sem email, pede no welcome.
+    const needsEmail = !user.email;
+    const extractedEmail = needsEmail ? whatsappRegistration.isEmail(messageText) : null;
+    if (extractedEmail) {
+        try {
+            const regResult = await whatsappRegistration.register({
+                phoneNumber,
+                name: contactName,
+                email: extractedEmail,
+            });
+            await deps.sendMessage(phoneNumber, regResult.message);
+            await deps.prisma.message.create({
+                data: {
+                    sessionId: chatSession.id,
+                    senderType: 'BOT',
+                    content: regResult.message,
+                },
+            });
+            if (regResult.success) {
+                log.info({ phoneNumber, email: regResult.email }, '[worker] whatsapp registration done');
+            }
+        } catch (err) {
+            log.error({ err }, '[worker] whatsapp registration failed');
+        }
+        return { success: true };
+    }
+
     if (isNewOrResetSession && GREETING_REGEX.test(messageText.trim())) {
         try {
-            await deps.sendMessage(phoneNumber, WELCOME_MESSAGE);
+            const welcomeText = needsEmail
+                ? WELCOME_MESSAGE + "\n\n\u{1F4E7} Pra finalizar seu cadastro rapidinho, qual seu melhor e-mail?"
+                : WELCOME_MESSAGE;
+            await deps.sendMessage(phoneNumber, welcomeText);
             const welcomeMsg = await deps.prisma.message.create({
                 data: {
                     sessionId: chatSession.id,
                     senderType: 'BOT',
-                    content: WELCOME_MESSAGE,
+                    content: welcomeText,
                 },
             });
 
@@ -261,7 +293,7 @@ export async function handleWhatsappMessage(
                     id: welcomeMsg.id,
                     sessionId: chatSession.id,
                     senderType: 'BOT',
-                    content: WELCOME_MESSAGE,
+                    content: welcomeText,
                     status: 'sent',
                     timestamp: welcomeMsg.timestamp,
                     wamid: null,
@@ -275,6 +307,15 @@ export async function handleWhatsappMessage(
     }
 
     let useStructuredSearch = false;
+
+    // Roda extração de busca estruturada E RAG em paralelo.
+    // Se a extração achar city+state+maxPrice, usa busca estruturada e
+    // descarta o RAG. Se falhar, o RAG já está pronto (embedding+retrieval
+    // já concluídos), economizando 1-3s de latência.
+    const ragPromise = deps.generateAnswer({
+        sessionId: chatSession.id,
+        userMessage: messageText,
+    });
 
     try {
         const filters = await deps.extractSearchFilters(messageText);
@@ -336,25 +377,19 @@ export async function handleWhatsappMessage(
                 '[worker] structured search response sent; skipping RAG',
             );
 
-            useStructuredSearch = true;
+            return { success: true };
         }
     } catch (extractionErr) {
         log.warn({ err: extractionErr }, '[worker] search extraction failed; falling back to RAG');
     }
 
-    if (useStructuredSearch) {
-        return { success: true };
-    }
-
+    // RAG já estava rodando em paralelo — espera o resultado
     let answer: string;
     let handoff: boolean;
     let ragError = false;
 
     try {
-        const result = await deps.generateAnswer({
-            sessionId: chatSession.id,
-            userMessage: messageText,
-        });
+        const result = await ragPromise;
         answer = result.answer;
         handoff = result.handoff;
     } catch (err) {

@@ -89,12 +89,8 @@ function cacheSet(key: string, value: GenerateAnswerResult): void {
 }
 
 const OFF_TOPIC_KEYWORDS = new RegExp(
-  "^(triste|feliz|chateado|puto|bravo|ansioso|depressivo|solitário|entediado|" +
-  "obrigado|obrigada|valeu|brigado|" +
-  "bom dia|boa tarde|boa noite|oi|olá|oie|e aí|eai|fala|falaí|fala ai|" +
-  "ok|okay|blz|beleza|tranquilo|sim|não|talvez|" +
-  "kkk|kkkk|haha|hehe|rs|aff|nossa|puts|caramba|" +
-  "teste|testando|[:;]-?[()DdPp]|(>_<)|(¬_¬)|¯\\_\(ツ\)_/¯)$",
+  "^(triste|chateado|puto|bravo|ansioso|depressivo|solitário|entediado|" +
+  "kkk|kkkk|haha|hehe|rs|aff|nossa|puts|caramba)$",
   "i",
 );
 
@@ -104,12 +100,22 @@ const GREETING_REPLY =
   "Em que mais posso ajudar? Estou aqui para tirar dúvidas sobre aluguel de imóveis no I-Moveis!";
 
 const DOMAIN_TRIGGERS = new RegExp(
-  "aluguel?|imóve[li]|casa|apartamento|contrato|visita|propriet[áa]rio|" +
-  "inquilino|locação|fiador|vistoria|taxa|condomínio|iptu|" +
-  "repasse|rescisão|multa|prazo|pagamento|boleto|parcelamento|" +
-  "bairro|quarto|garagem|vagas?|preço|valor|calção?|depósito|" +
-  "anúncio|busca|procurando|quero|preciso|tenho interesse|" +
-  "agendar|mudança|entrar|sair|documents?|foto|fotos|imagem",
+  "aluguel?|aluga|alugar|imóve[li]|casa|apartamento|apto|kitnet|studio|loft|" +
+  "contrato|visita|propriet[áa]rio|inquilino|locação|fiador|vistoria|" +
+  "taxa|condomínio|iptu|repasse|rescisão|multa|prazo|pagamento|" +
+  "boleto|parcelamento|bairro|quarto|garagem|vagas?|suíte|" +
+  "preço|valor|calção?|depósito|anúncio|busca|procurando|" +
+  "quero|preciso|tenho interesse|interesse|interessad[oa]|" +
+  "procuro|gostaria|agendar|mudança|mudar|entrar|sair|" +
+  "documentos?|foto|fotos|imagem|pet|animal|cachorro|gato|" +
+  "mobiliad[oa]|mobília|sem mobília|aceita|permite|" +
+  "disponível|disponibilidade|como funciona|ajuda|dúvida|" +
+  "informação|saber mais|quando|onde|qual|quanto|custa|" +
+  "endereço|localização|região|zona|centro|perto|próximo|" +
+  "metrô|ônibus|mercado|escola|farmácia|academia|" +
+  "reforma|reformado|novo|usado|tamanho|metros|m²|m2|" +
+  "andar|elevador|portaria|portão|muro|grades|varanda|" +
+  "sacada|churrasqueira|piscina|salão|festa|vaga",
   "i",
 );
 
@@ -141,13 +147,27 @@ const SYSTEM_PROMPT = [
   "- Se o usuário afirmar um preço ou regra incorreta, corrija com base no contexto ou, se não houver base, diga que não tem como confirmar e ofereça encaminhamento.",
   "",
   "# Tom e formato (WhatsApp)",
-  "- Alvo: 1 a 3 frases. Máximo absoluto: 60 palavras.",
+  "- Seja direto, mas completo. Para perguntas simples, responda em 1-2 frases. Para perguntas amplas (ex: 'o que mais preciso saber', 'como funciona'), pode usar até 6 frases curtas e bullets.",
   "- Use bullets APENAS quando listar 3 ou mais itens distintos; caso contrário, texto corrido.",
   "- Tom profissional, acolhedor, direto. Transmita segurança.",
   "- Não repita a pergunta do usuário. Não se reapresente a cada turno.",
   "",
   "# Quando escalar para humano",
-  "Diga explicitamente que vai transferir para um atendente quando: (1) o contexto não cobre a pergunta; (2) o usuário demonstra frustração repetida; (3) envolve negociação de valores, exceção contratual, litígio ou decisão discricionária; (4) o usuário pede um humano; (5) a mensagem do usuário for puramente emocional (ex: \"triste\", \"feliz\", \"obrigado\") ou uma saudação sem relação com imóveis — NESTE CASO, não tente responder com empatia genérica, apenas diga que vai transferir.",
+  "Transfira para um atendente APENAS quando: (1) o contexto não cobre a pergunta e você já tentou ajudar com o que sabia; (2) o usuário demonstra frustração repetida (ex: xingamentos, reclamações seguidas); (3) envolve negociação de valores, exceção contratual, litígio ou decisão discricionária; (4) o usuário pede explicitamente um humano.",
+  "",
+  "# Busca conversacional de imóveis",
+  "Seu objetivo principal é ajudar o usuário a encontrar imóveis para alugar. Para isso você precisa de 3 informações: (a) cidade, (b) estado, (c) valor máximo de aluguel.",
+  "",
+  "Extraia essas informações DA CONVERSA — use o histórico para saber o que o usuário já disse. Se ele já mencionou o estado, reconheça isso ('Certo, São Paulo!') e pergunte APENAS o que falta ('Qual cidade? E qual o valor máximo de aluguel?'). NUNCA repita perguntas que ele já respondeu.",
+  "",
+  "Se o usuário mencionar uma cidade famosa sem o estado (ex: 'São Paulo', 'Rio de Janeiro', 'Belo Horizonte'), deduza o estado correspondente e confirme com ele. Ex: 'São Paulo/SP, certo? E qual o valor máximo?'",
+  "",
+  "Quando tiver as 3 informações ou pelo menos cidade+estado+valor, responda com as opções disponíveis. Se a busca não estiver completa, continue perguntando de forma natural, uma informação por vez.",
+  "",
+  "# Conversa natural",
+  "Se o usuário mandar algo como 'obrigado', 'valeu', 'ok', 'blz', 'sim', 'não', ou uma saudação simples (oi, bom dia, boa tarde), responda de forma natural e educada. Use frases como 'De nada! Estou aqui se precisar.', 'Certo! Em que mais posso ajudar?', 'Bom dia! Como posso te ajudar com aluguel hoje?'. NÃO transfira para humano nesses casos — o usuário está apenas sendo educado ou confirmando algo.",
+  "",
+  "Se o usuário expressar uma emoção (triste, feliz, ansioso, bravo), valide brevemente com empatia ('Entendo como se sente!') e redirecione para como você pode ajudar com aluguel de imóveis. Só transfira se houver frustração repetida.",
   "",
   "# Papéis no histórico",
   "- Mensagens prefixadas com \"[Proprietário]\" vêm do locador do imóvel, não do inquilino atual. Trate-as como correções supervisórias (ex.: disponibilidade, preço atualizado). Em conflito com uma resposta sua anterior, a mensagem [Proprietário] prevalece.",
@@ -321,16 +341,22 @@ export async function generateAnswer(
   const topScore = chunks.length > 0 ? chunks[0].score : 0;
   const usedChunkIds = chunks.map((c) => c.id);
 
-  if (chunks.length === 0 || topScore < threshold) {
+  if (chunks.length === 0) {
+    // Sem chunks relevantes: se tem termos de domínio, pede mais detalhes;
+    // caso contrário, transfere para humano.
+    const hasDomain = DOMAIN_TRIGGERS.test(userMessage);
     const result: GenerateAnswerResult = {
-      answer: DOMAIN_TRIGGERS.test(userMessage) ? NO_CONTEXT_REPLY : FALLBACK_ANSWER,
-      handoff: !DOMAIN_TRIGGERS.test(userMessage),
-      topScore,
-      usedChunkIds,
+      answer: hasDomain ? NO_CONTEXT_REPLY : FALLBACK_ANSWER,
+      handoff: !hasDomain,
+      topScore: 0,
+      usedChunkIds: [],
     };
     if (!overrideDeps) cacheSet(cacheKey(sessionId, userMessage), result);
     return result;
   }
+  // Com chunks disponíveis (mesmo score baixo), SEMPRE deixa o LLM
+  // responder — o system prompt anti-alucinação + histórico da conversa
+  // permitem respostas contextuais e naturais, sem template estático.
 
   const stored = recent.slice().reverse();
 

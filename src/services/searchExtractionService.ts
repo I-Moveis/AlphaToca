@@ -19,24 +19,56 @@ const BR_STATES = new Set([
   "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ]);
 
+const STATE_NAME_TO_ABBR: Record<string, string> = {
+  "acre": "AC", "alagoas": "AL", "amapa": "AP", "amapá": "AP",
+  "amazonas": "AM", "bahia": "BA", "ceara": "CE", "ceará": "CE",
+  "distrito federal": "DF", "espirito santo": "ES", "espírito santo": "ES",
+  "goias": "GO", "goiás": "GO", "maranhao": "MA", "maranhão": "MA",
+  "mato grosso": "MT", "mato grosso do sul": "MS",
+  "minas gerais": "MG", "para": "PA", "pará": "PA",
+  "paraiba": "PB", "paraíba": "PB", "parana": "PR", "paraná": "PR",
+  "pernambuco": "PE", "piaui": "PI", "piauí": "PI",
+  "rio de janeiro": "RJ", "rio grande do norte": "RN",
+  "rio grande do sul": "RS", "rondonia": "RO", "rondônia": "RO",
+  "roraima": "RR", "santa catarina": "SC",
+  "sao paulo": "SP", "são paulo": "SP",
+  "sergipe": "SE", "tocantins": "TO",
+};
+
+function normalizeState(raw: string | null | undefined): string | null {
+  if (!raw || raw.trim() === "") return null;
+  const cleaned = raw.trim().replace(/[^a-zA-ZÀ-ÿ\s]/g, "");
+  const upper = cleaned.toUpperCase();
+  if (BR_STATES.has(upper)) return upper;
+  const lower = cleaned.toLowerCase();
+  if (STATE_NAME_TO_ABBR[lower]) return STATE_NAME_TO_ABBR[lower];
+  return null;
+}
+
+function cleanPrice(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  let str = String(raw).trim();
+  str = str.replace(/[R$\s._-]/g, "").replace(",", ".");
+  const num = Number(str);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return num;
+}
+
 export const SearchFiltersSchema = z.object({
   intent: z.enum(SEARCH_INTENT_VALUES),
   city: z.string().nullable(),
-  state: z
-    .string()
-    .transform((s) => {
-      const trimmed = s.trim().replace(/[^a-zA-Z]/g, "");
-      return trimmed.length >= 2 ? trimmed.slice(0, 2).toUpperCase() : trimmed.toUpperCase();
-    })
-    .refine((s) => !s ||  BR_STATES.has(s), { message: "Estado brasileiro invalido" })
-    .nullable(),
-  maxPrice: z
-    .coerce.number()
-    .positive()
-    .nullable(),
+  state: z.string().nullable(),
+  maxPrice: z.union([z.string(), z.number()]).nullable(),
 });
 
-export type SearchFilters = z.infer<typeof SearchFiltersSchema>;
+export type SearchFilters = {
+  intent: SearchIntent;
+  city: string | null;
+  state: string | null;
+  maxPrice: number | null;
+};
+
+type RawSearchFilters = z.infer<typeof SearchFiltersSchema>;
 
 export type { StructuredLLM };
 
@@ -67,9 +99,9 @@ export function buildSearchExtractionMessages(
   return [new SystemMessage(SYSTEM_PROMPT), new HumanMessage(userMessage)];
 }
 
-let defaultExtractorCache: StructuredLLM<SearchFilters> | null = null;
+let defaultExtractorCache: StructuredLLM<RawSearchFilters> | null = null;
 
-function getDefaultExtractor(): StructuredLLM<SearchFilters> {
+function getDefaultExtractor(): StructuredLLM<RawSearchFilters> {
   if (defaultExtractorCache) return defaultExtractorCache;
   defaultExtractorCache = getStructuredChatModel(
     SearchFiltersSchema,
@@ -83,8 +115,14 @@ export async function extractSearchFilters(
 ): Promise<SearchFilters> {
   const extractor = getDefaultExtractor();
   const messages = buildSearchExtractionMessages(userMessage);
-  const parsed = await extractor.extract(messages);
-  return SearchFiltersSchema.parse(parsed);
+  const raw = await extractor.extract(messages);
+  const parsed = SearchFiltersSchema.parse(raw);
+  return {
+    intent: parsed.intent,
+    city: parsed.city || null,
+    state: normalizeState(parsed.state),
+    maxPrice: cleanPrice(parsed.maxPrice),
+  };
 }
 
 export function buildSearchResponse(params: {
