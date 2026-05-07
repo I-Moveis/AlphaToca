@@ -51,8 +51,8 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Most of the contract was already in place after US-002: (a) Property.status is a scalar on the Prisma model, so getPropertyById (findUnique) and both searchProperties branches (findMany include + raw `SELECT *`) already emit it unchanged; (b) updatePropertySchema already has `status: z.nativeEnum(PropertyStatus).optional()`, so PUT /:id accepts and persists it via prisma.property.update; (c) Swagger Property component, POST /properties JSDoc, and PUT /properties/:id JSDoc (via $ref: '#/components/schemas/Property' on both request and response) already expose the 3-value enum with AVAILABLE as default. The delivered delta is the missing integration regression test: new tests/propertyStatus.test.ts mounts the real Express app over a mocked propertyService backing store and drives create (default AVAILABLE) → PUT { status:'NEGOTIATING' } → GET /:id → GET /search, plus coverage for PUT→RENTED persistence and PUT with an invalid enum value returning 400 VALIDATION_ERROR through the ZodError path in errorHandler.ts. Verification: npx tsc --noEmit → exit 0; related test set (propertyStatus + propertyPhotoUpload + seedUuidRegression + seed + generators + demoIds) = 58/58 pass; full suite 221 pass / 15 fail — same pre-existing Auth0→Firebase gap baseline (auth.test.ts, userSync.test.ts, ingestKnowledge.test.ts), no new regression."
     },
     {
       "id": "US-004",

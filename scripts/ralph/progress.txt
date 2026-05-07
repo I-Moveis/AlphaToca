@@ -12,6 +12,9 @@ Started: Thu May  7 12:11:39 PM -03 2026
 - Swagger is split: `src/config/swagger.ts` owns component schemas (e.g., `Property`); per-route JSDoc blocks in `src/routes/*.ts` own request/response shapes — when an enum changes, both files need an edit.
 - Prisma enum value rename: use `ALTER TYPE "X" RENAME VALUE 'OLD' TO 'NEW';` — it rewrites the catalog label in place, so existing rows carry over with zero data loss (no `UPDATE` pass required).
 - `propertyValidation.ts` uses `z.nativeEnum(PropertyStatus)` — it re-reads the Prisma client enum at import time, so bumping the enum only requires a `prisma generate`, not a Zod edit.
+- Integration tests that need a "backing store" without a real DB: mount the real Express app via `supertest` and swap `propertyService` with `vi.mock('../src/services/propertyService', importOriginal)` spreading the actual module plus overriding only the methods you exercise. A `Map<id, record>` in `beforeEach` is enough to simulate create/update/get/search chains — Prisma model semantics are preserved by having the mock merge updates (`{...existing, ...data}`).
+- Route-level auth: `app.use('/api', propertyRoutes)` in src/app.ts mounts WITHOUT the `authStack`, so POST/PUT/DELETE /properties are currently unauthenticated at the Express layer. Owner-only checks (US-006/US-007) will need the middleware added OR an inline `localUser`/ownership guard in the controller.
+- Zod error shape: the global errorHandler (`src/middlewares/errorHandler.ts`) already converts `ZodError` into `{ status: 400, code: 'VALIDATION_ERROR', messages: [...] }` — route/controllers only need to `schema.parse(req.body)` and pass the ZodError to `next(error)`.
 
 ---
 
@@ -61,4 +64,26 @@ Started: Thu May  7 12:11:39 PM -03 2026
   - `src/utils/propertyValidation.ts` uses `z.nativeEnum(PropertyStatus)` rather than a hard-coded list — this is the preferred pattern for enum validation and means Zod-side edits are free when the Prisma enum changes.
   - Swagger lives in two places that both need edits on enum changes: `src/config/swagger.ts` (central component schemas) and per-route JSDoc blocks in `src/routes/*.ts` (request/response shapes). `propertyRoutes.ts:90` and `:153` both had the enum duplicated for the JSON and multipart branches of POST.
   - The live Supabase DB is reachable from `.env` — do NOT run `prisma migrate dev` here (it would apply to the pooler-backed prod DB). Hand-author the SQL and rely on `prisma validate` + `prisma generate` locally; real apply is the reviewer's step on a throwaway dev DB.
+---
+
+## [2026-05-07] - US-003 - Include property.status in GET /properties responses
+- Verified that most of the contract was already satisfied by the US-001/US-002 deltas plus the schema as-shipped: `Property.status` is a scalar on the Prisma model, so both `getPropertyById` (findUnique) and `searchProperties` (findMany with `include: { images }` + raw `SELECT *` path) return it unchanged. `updatePropertySchema` already has `status: z.nativeEnum(PropertyStatus).optional()`, so PUT /:id accepts and persists status via `prisma.property.update`. The Swagger Property component schema, POST /properties JSDoc, and PUT /properties/:id JSDoc (via `$ref: Property`) already expose the 3-value enum with AVAILABLE default.
+- Delivered delta: the missing integration regression test. New `tests/propertyStatus.test.ts` mounts the real Express app against a mocked `propertyService` whose methods are backed by a `Map<id, record>` so create/update/get/search chain through real controllers + Zod + errorHandler. Three cases:
+  1. Create (no status → default AVAILABLE) → PUT `{ status: 'NEGOTIATING' }` → GET /:id returns NEGOTIATING → GET /search?landlordId=… yields the same item with NEGOTIATING.
+  2. PUT `{ status: 'RENTED' }` persists and round-trips through GET /:id.
+  3. PUT `{ status: 'NOT_A_REAL_STATUS' }` returns 400 VALIDATION_ERROR via the ZodError branch in `src/middlewares/errorHandler.ts`; the service mock is never invoked.
+- Files changed:
+  - tests/propertyStatus.test.ts (new)
+  - scripts/ralph/prd.json (US-003 passes → true + notes)
+  - scripts/ralph/progress.txt (this entry + consolidated patterns)
+- Verification:
+  - `npx tsc --noEmit` → exit 0
+  - `npx vitest run tests/propertyStatus.test.ts` → 3/3 pass
+  - Related test set (propertyStatus + propertyPhotoUpload + seedUuidRegression + seed + generators + demoIds) → 58/58 pass
+  - Full suite: 221 pass / 15 fail — same pre-existing Auth0→Firebase baseline (auth.test.ts, userSync.test.ts, ingestKnowledge.test.ts). +3 tests vs. end of US-002, no new regressions.
+- **Learnings for future iterations:**
+  - When a story's acceptance criteria are already satisfied by the schema + existing Zod + existing Swagger, the delivered value is the *regression test that proves it*. Don't skip the test just because the runtime behavior already exists — the test is what keeps it from silently regressing.
+  - `supertest` + `vi.mock(... importOriginal)` with a `Map` backing store is the cheapest way to write end-to-end integration tests in this repo without spinning up Postgres. Future stories (US-004..US-007, US-018..US-020) can reuse this shape — see `tests/propertyStatus.test.ts` for the template.
+  - `app.use('/api', propertyRoutes)` in `src/app.ts` is the one router mounted WITHOUT `authStack`. When US-006/US-007 adds the multipart PUT with owner-only 403s, either prepend `authStack` here or guard inside the controller via `req.localUser` (set by `authSyncMiddleware`).
+  - Raw SQL `SELECT *` path inside `propertyService.searchProperties` returns Postgres column names (e.g., `moderation_status`), not camelCased field names — but `status` has no `@map`, so it comes through as `status` either way. If a future story touches a raw-SQL response shape for fields WITH `@map`, the raw SELECT list must be explicit to avoid shape drift vs. the Prisma path.
 ---
