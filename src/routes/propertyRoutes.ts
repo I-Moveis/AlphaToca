@@ -71,6 +71,12 @@ const landlordAuthStack = [checkJwt, authSyncMiddleware, requireRole(Role.LANDLO
  *               petsAllowed:
  *                 type: boolean
  *                 example: true
+ *               hasWifi:
+ *                 type: boolean
+ *                 example: true
+ *               hasPool:
+ *                 type: boolean
+ *                 example: false
  *               latitude:
  *                 type: number
  *                 example: -23.5489
@@ -134,6 +140,12 @@ const landlordAuthStack = [checkJwt, authSyncMiddleware, requireRole(Role.LANDLO
  *               petsAllowed:
  *                 type: boolean
  *                 example: true
+ *               hasWifi:
+ *                 type: boolean
+ *                 example: true
+ *               hasPool:
+ *                 type: boolean
+ *                 example: false
  *               latitude:
  *                 type: number
  *                 example: -23.5489
@@ -267,6 +279,16 @@ router.get('/properties', propertyController.list);
  *           type: boolean
  *       - in: query
  *         name: nearSubway
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: hasWifi
+ *         description: Filtra imóveis que possuem Wi-Fi (LL-022).
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: hasPool
+ *         description: Filtra imóveis que possuem piscina (LL-022).
  *         schema:
  *           type: boolean
  *       - in: query
@@ -997,6 +1019,12 @@ router.get('/properties/:id', propertyController.getById);
  *               status:
  *                 type: string
  *                 enum: [AVAILABLE, NEGOTIATING, RENTED]
+ *               hasWifi:
+ *                 type: boolean
+ *                 description: LL-022 — Atualiza a flag de Wi-Fi. Multipart envia a string `'true'`/`'false'`; o backend converte para boolean.
+ *               hasPool:
+ *                 type: boolean
+ *                 description: LL-022 — Atualiza a flag de piscina. Multipart envia a string `'true'`/`'false'`; o backend converte para boolean.
  *               photos:
  *                 type: array
  *                 maxItems: 20

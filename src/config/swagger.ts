@@ -89,6 +89,8 @@ const options: swaggerJsdoc.Options = {
             area: { type: 'number', minimum: 0, example: 65.5 },
             isFurnished: { type: 'boolean', default: false },
             petsAllowed: { type: 'boolean', default: false },
+            hasWifi: { type: 'boolean', default: false, description: 'LL-021 — Wi-Fi incluso no imóvel.' },
+            hasPool: { type: 'boolean', default: false, description: 'LL-021 — Imóvel possui piscina.' },
             latitude: { type: 'number', example: -23.5489 },
             longitude: { type: 'number', example: -46.6388 },
             nearSubway: { type: 'boolean', default: false },

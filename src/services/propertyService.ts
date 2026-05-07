@@ -155,6 +155,8 @@ export const propertyService = {
       petsAllowed,
       nearSubway,
       isFeatured,
+      hasWifi,
+      hasPool,
       city,
       state,
       landlordId,
@@ -197,6 +199,8 @@ export const propertyService = {
       ...(petsAllowed !== undefined && { petsAllowed }),
       ...(nearSubway !== undefined && { nearSubway }),
       ...(isFeatured !== undefined && { isFeatured }),
+      ...(hasWifi !== undefined && { hasWifi }),
+      ...(hasPool !== undefined && { hasPool }),
       ...(city && { city: { contains: city, mode: 'insensitive' } }),
       ...(state && { state: { equals: state, mode: 'insensitive' } }),
       // Filtros de proprietário/inquilino (§1 BACKEND_GAPS)

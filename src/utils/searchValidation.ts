@@ -34,6 +34,8 @@ export const propertySearchSchema = z.object({
   petsAllowed: stringToBoolean,
   nearSubway: stringToBoolean,
   isFeatured: stringToBoolean,
+  hasWifi: stringToBoolean,
+  hasPool: stringToBoolean,
 
   city: z.string().optional(),
   state: z.string().length(2).toUpperCase().optional(),
