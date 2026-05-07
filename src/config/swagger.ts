@@ -233,6 +233,31 @@ const options: swaggerJsdoc.Options = {
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
+        SupportTicket: {
+          type: 'object',
+          required: ['id', 'code', 'title', 'description', 'userId', 'userName', 'userRole', 'status', 'createdAt', 'updatedAt'],
+          description:
+            'Ticket de suporte aberto por um usuário final (tenant/landlord) ou por um admin. `code` é o protocolo humano SUP-AAMMDD-XXXX gerado no POST (US-018). `userRole` captura o role no momento da abertura — mesmo que o role do usuário mude depois, o valor aqui preserva o contexto. `resolution` é preenchido pelo admin quando o status transiciona para RESOLVED via PUT /api/admin/support/tickets/{id} (US-020).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            code: {
+              type: 'string',
+              pattern: '^SUP-\\d{6}-[A-Z0-9]{4}$',
+              example: 'SUP-260507-A3F2',
+              description: 'Protocolo humano no formato SUP-AAMMDD-XXXX (AAMMDD = data do servidor, XXXX = 4 chars base36 upper).',
+            },
+            title: { type: 'string', minLength: 1, maxLength: 120, example: 'App trava ao enviar foto' },
+            description: { type: 'string', minLength: 1, maxLength: 4000 },
+            userId: { type: 'string', format: 'uuid' },
+            userName: { type: 'string', example: 'Maria Silva' },
+            userRole: { type: 'string', enum: ['TENANT', 'LANDLORD', 'ADMIN'] },
+            status: { type: 'string', enum: ['OPEN', 'RESOLVED'], default: 'OPEN' },
+            resolution: { type: 'string', nullable: true, maxLength: 4000 },
+            assignedToId: { type: 'string', format: 'uuid', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
         ErrorResponse: {
           type: 'object',
           properties: {

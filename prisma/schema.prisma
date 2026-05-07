@@ -135,6 +135,8 @@ model User {
   rentalPaymentUpdates RentalPayment[] @relation("RentalPaymentUpdatedBy")
   conversationsAsLandlord Conversation[] @relation("LandlordConversations")
   conversationsAsTenant   Conversation[] @relation("TenantConversations")
+  supportTicketsOpened    SupportTicket[] @relation("SupportTicketOpener")
+  supportTicketsAssigned  SupportTicket[] @relation("SupportTicketAssignee")
 
   @@map("users")
 }
@@ -500,6 +502,45 @@ model RentalPayment {
   @@unique([propertyId, period], name: "rental_payments_property_period_key")
   @@index([propertyId], name: "rental_payments_property_idx")
   @@map("rental_payments")
+}
+
+// Tickets de suporte abertos por usuários finais (landlord/tenant) ou por admins,
+// listados e triados via endpoints /api/support/tickets (US-018) e
+// /api/admin/support/tickets (US-019/US-020). `code` é um protocolo humano
+// SUP-AAMMDD-XXXX gerado no POST; `userRole` captura o role no momento da
+// abertura para auditoria (mesmo que o role do usuário mude depois).
+enum SupportUserRole {
+  TENANT
+  LANDLORD
+  ADMIN
+}
+
+enum SupportTicketStatus {
+  OPEN
+  RESOLVED
+}
+
+model SupportTicket {
+  id           String              @id @default(uuid())
+  code         String              @unique
+  title        String
+  description  String              @db.Text
+  userId       String              @map("user_id")
+  userName     String              @map("user_name")
+  userRole     SupportUserRole     @map("user_role")
+  status       SupportTicketStatus @default(OPEN)
+  resolution   String?             @db.Text
+  assignedToId String?             @map("assigned_to_id")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+
+  user       User  @relation("SupportTicketOpener", fields: [userId], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt], name: "support_tickets_status_created_idx")
+  @@index([userRole, createdAt], name: "support_tickets_role_created_idx")
+  @@index([userId], name: "support_tickets_user_idx")
+  @@map("support_tickets")
 }
 
 // Thread de chat canônico entre um (landlord, tenant) em torno de um Property.
