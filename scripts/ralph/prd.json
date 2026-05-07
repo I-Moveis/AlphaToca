@@ -33,8 +33,8 @@
         "Tests pass (npx vitest run)"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Closed as no-op. US-001's live-curl evidence on this branch proved /uploads/* serves 200 + Access-Control-Allow-Origin: * + correct Content-Type. src/app.ts is byte-identical between US-001 and US-002 (cors at line 40 BEFORE static at line 50 — already the configuration the AC asked for). Three hypotheses (CORS ordering, missing files, wrong Content-Type) all rejected by US-001. The placeholder-of-house symptom lives in the Flutter repo (_normalizeLocalHost rewriting 10.0.2.2 → localhost unconditionally on Android emulator), not this repo. Typecheck clean. Test suite unchanged from baseline (23 pre-existing failures in auth/rag/ingest/userSync/visitValidation tests — all unrelated to /uploads). Zero code changes = zero regression surface on the multipart upload flow."
     },
     {
       "id": "US-003",

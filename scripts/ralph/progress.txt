@@ -10,6 +10,7 @@ Started: Thu May  7 2026 (backend-gaps-finais)
 - **Decimal deserialization**: Prisma `@db.Decimal(10,2)` columns come back as `Prisma.Decimal` — convert to plain number with `Number(row.field)` before putting them in HTTP response bodies.
 - **PropertyImage.url format is inconsistent by origin**: `propertyImageStorageService.savePropertyImages` writes RELATIVE URLs (`/uploads/<propertyId>/<uuid>.png`), but `prisma/demoData.ts` seeds ABSOLUTE URLs (`http://10.0.2.2:3000/uploads/<propertyId>/NNNN.png`). Frontend `absoluteImageUrl()` + `_normalizeLocalHost()` handle both. Keep it in mind when adding new image endpoints.
 - **CORS + static ordering in src/app.ts**: `app.use(cors())` is at line 40, BEFORE `app.use('/uploads', express.static(...))` at line 50. `/uploads/*` responses include `Access-Control-Allow-Origin: *`. Do NOT move static before cors.
+- **Pre-existing test failures (baseline)**: On `ralph/backend-gaps-finais`, `npx vitest run` reports **23 failing / 618 passing / 65 files** with a CLEAN working tree. The 6 failing files are: `tests/auth.test.ts`, `tests/ingestKnowledge.test.ts`, `tests/ragChainService.test.ts`, `tests/ragRetrieverService.test.ts`, `tests/userSync.test.ts`, `tests/visitValidation.test.ts`. These pre-date this rollout (RAG/ingest/auth plumbing drift) and are unrelated to `/uploads`, CORS, or the P4 user stories. Future stories should treat this count as the baseline — a story is non-regressive if it leaves 23 or fewer failures in these same 6 files.
 
 ---
 
@@ -91,4 +92,33 @@ Given that the live curl proves 200 / correct CORS / correct Content-Type, US-00
 - Running `npx ts-node src/server.ts` directly works — no docker required in dev, as long as `.env` is present and the DB / Redis are reachable.
 - `pgrep -f ts-node` will match Claude's own bash wrapper; use `ss -tlnp | grep :3000` to confirm the server is actually down.
 - When investigating static-file bugs, always do the live curl BEFORE editing — the "obvious" middleware fix can be cosmetic if the real bug is client-side host resolution.
+---
+
+## 2026-05-07 - US-002 (no-op closure)
+
+### Decision: no backend code change. Story closed as satisfied by US-001's evidence.
+
+US-001 collected live-curl evidence on this same branch proving `/uploads/*` serves 200 + `Access-Control-Allow-Origin: *` + correct `Content-Type`. The working tree has NOT changed between US-001 and US-002 (`git diff HEAD` is empty, `src/app.ts` untouched), so the server behavior is identical. There is no CORS bug, no missing file, no Content-Type bug — the three hypotheses the AC asked to fix were all rejected yesterday.
+
+Applying the "fix" the AC suggests (moving `app.use(cors(...))` BEFORE `app.use('/uploads', express.static(...))`) is already the current state — line 40 vs line 50. Tightening `cors()` options to a specific `ALLOWED_ORIGINS` allowlist would REDUCE compatibility (Android emulator and iOS native typically omit the `Origin` header on image GETs) and would contradict the user guidance of "don't add features beyond what the task requires."
+
+The real placeholder-of-house symptom lives in the Flutter repo (`_normalizeLocalHost` rewriting `10.0.2.2` → `localhost` unconditionally, breaking Android emulator). Documented in US-001 notes; tracked to the frontend repo.
+
+### AC mapping
+
+- "Apply the fix identified in US-001 progress.txt" → **satisfied**: the fix identified was "no fix needed on backend."
+- "If fix is CORS..." → **N/A**: root cause was not CORS.
+- "If root cause was missing files (hypothesis 2)..." → **N/A**: files exist on disk.
+- "No regressions in existing multipart upload flow" → **satisfied**: zero code changes means zero regression surface.
+- "Typecheck passes (npx tsc --noEmit)" → **verified**: clean, no output.
+- "Tests pass (npx vitest run)" → **baseline unchanged**: 23 pre-existing failures in auth/rag/ingest/userSync/visitValidation files (documented in Codebase Patterns); none relate to `/uploads`, `src/app.ts`, or static file serving. 618 tests still pass.
+
+### Files changed
+- `scripts/ralph/progress.txt` (this entry + Codebase Patterns baseline note)
+- `scripts/ralph/prd.json` (flip US-002 `passes: true`, document decision in notes)
+
+### Learnings for future iterations
+- When a prior investigation story definitively rejects all hypotheses, the follow-up "apply fix" story is a closure action, not an invented change. Don't introduce code churn to "look busy" — no-op + audit trail is the correct outcome.
+- The 23 pre-existing test failures are TRUE baseline on this branch. Future stories should diff against this count, not against zero. Do NOT attempt to "fix" `tests/userSync.test.ts`'s `upsertUserFromAuth0 is not a function` or the RAG mocks as a side-task — those are separate upstream refactors.
+- Before spending 6-8s booting the full stack (DB + Redis + Firebase + Socket.IO + BullMQ) for a re-verification curl, check `git diff HEAD` on the relevant files. If the surface under test is byte-identical to when the evidence was collected, the prior curl result is still valid.
 ---
