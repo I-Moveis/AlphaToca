@@ -62,8 +62,8 @@
         "Typecheck passes: npx tsc --noEmit"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Wrote tasks/audit-uuid-validators.md cataloging all 20 z.string().uuid() calls across the 6 files (contractValidation 3, proposalValidation 5, visitValidation 7, propertyValidation 1, searchValidation 2, chatValidation 2). Every call is strict — none was downgraded to z.string().min(1) or .nonempty(). Grep guard `grep -rn 'z\\.string\\(\\)\\.(min|nonempty)' src/utils/` returned 8 hits, all on non-id fields (name, title, description, address, content) that predate this PRD. One PRD AC discrepancy documented in-line: the AC wording expected 6 proposalValidation.ts validators ('propertyId, tenantId, landlordId and their optional variants') but the file only has 5 — createProposalSchema omits landlordId (derived server-side from the property). No validator needed relaxing, so the Open Questions section of tasks/prd-fix-seed-uuid-consistency.md was left as-is. Typecheck clean."
     },
     {
       "id": "US-005",
