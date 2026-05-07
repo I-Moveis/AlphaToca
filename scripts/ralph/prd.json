@@ -79,8 +79,8 @@
         "Typecheck passes: npx tsc --noEmit"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added tests/seedUuidRegression.test.ts (3 cases, all pass). Uses Supertest against the real Express app via `import app from '../src/app'`. Mocks `../src/middlewares/authMiddleware` with a full-replacement stub (exports validateAuthConfig/checkJwt/authSyncMiddleware/requireRole) — checkJwt accepts `Bearer valid-landlord-token` and authSyncMiddleware attaches a synthesized localUser with id=DEMO_LANDLORD_1_ID. Also mocks `../src/services/propertyService.searchProperties` so the landlordId branch returns 2 demo-UUID properties without hitting Postgres — keeps Zod validation in the chain. Test 1: GET /api/users/me with Bearer token → 200, body.id passes `z.string().uuid().safeParse(...).success` AND the strict v4 regex AND === DEMO_LANDLORD_1_ID. Test 2: GET /api/properties/search?landlordId=<id from /users/me> → 200, data.length >= 1, mock called with landlordId=DEMO_LANDLORD_1_ID. Test 3: GET /api/properties/search?landlordId=user-demo-landlord-1 → 400 with code VALIDATION_ERROR (proves searchValidation.ts:39 stayed strict) and the mocked service was NOT called. `npx vitest run tests/seedUuidRegression.test.ts` → 3 passed. Full suite → 16 failed / 209 passed (baseline 16/206 + my 3). Typecheck clean."
     },
     {
       "id": "US-006",
