@@ -133,6 +133,8 @@ model User {
   contractsAsTenant   Contract[]      @relation("TenantContracts")
   contractsAsLandlord Contract[]      @relation("LandlordContracts")
   rentalPaymentUpdates RentalPayment[] @relation("RentalPaymentUpdatedBy")
+  conversationsAsLandlord Conversation[] @relation("LandlordConversations")
+  conversationsAsTenant   Conversation[] @relation("TenantConversations")
 
   @@map("users")
 }
@@ -181,6 +183,7 @@ model Property {
   expenses        PropertyExpense[]
   maintenanceLogs MaintenanceLog[]
   rentalPayments  RentalPayment[]
+  conversations   Conversation[]
 
   @@index([moderationStatus], name: "properties_moderation_status_idx")
   @@map("properties")
@@ -484,4 +487,27 @@ model RentalPayment {
   @@unique([propertyId, period], name: "rental_payments_property_period_key")
   @@index([propertyId], name: "rental_payments_property_idx")
   @@map("rental_payments")
+}
+
+// Thread de chat canônico entre um (landlord, tenant) em torno de um Property.
+// O id é referência estável usada pelo frontend (substitui os antigos ids sintéticos
+// "property-<pid>-tenant-<tid>"). O endpoint GET /api/conversations/resolve (US-012)
+// faz upsert na chave composta (propertyId, landlordId, tenantId) — a unicidade é
+// o mecanismo anti-race. Mensagens vivem em outra tabela (fora do escopo deste PRD);
+// a API documenta `messages: []` como placeholder.
+model Conversation {
+  id         String   @id @default(uuid())
+  propertyId String   @map("property_id")
+  landlordId String   @map("landlord_id")
+  tenantId   String   @map("tenant_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  landlord User     @relation("LandlordConversations", fields: [landlordId], references: [id], onDelete: Cascade)
+  tenant   User     @relation("TenantConversations", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, landlordId, tenantId], name: "conversations_property_landlord_tenant_key")
+  @@index([landlordId], name: "conversations_landlord_idx")
+  @@index([tenantId], name: "conversations_tenant_idx")
+  @@map("conversations")
 }

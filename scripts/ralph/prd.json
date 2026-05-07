@@ -203,8 +203,8 @@
         "Tests pass"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added model Conversation to prisma/schema.prisma with id (uuid default), propertyId, landlordId, tenantId, createdAt (default now). Unique constraint (propertyId, landlordId, tenantId) mapped to rental-namespace client key conversations_property_landlord_tenant_key; DB index name conversations_property_id_landlord_id_tenant_id_key (Prisma default). Separate indexes on landlord_id and tenant_id. Inverse relations added on User (conversationsAsLandlord, conversationsAsTenant) and Property (conversations). onDelete: Cascade for all three FKs — a conversation is a chat thread; it makes no sense to keep one after any participant or the property is deleted (same convention as Favorite). Hand-authored prisma/migrations/20260507170000_add_conversation/migration.sql cross-checked against prisma migrate diff --from-empty --to-schema-datamodel output — all index names, constraint names, and CASCADE clauses match byte-for-byte. Swagger components.schemas.Conversation added with messages field as an empty-array placeholder per PRD. npx prisma validate ok; npx prisma generate emitted @prisma/client with Conversation type; npx tsc --noEmit exit 0; full suite 280 pass / 15 fail — identical to end of US-010 (same pre-existing Auth0→Firebase baseline). Live-DB apply deferred to reviewer per repo convention."
     },
     {
       "id": "US-012",

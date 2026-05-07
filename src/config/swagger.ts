@@ -198,6 +198,25 @@ const options: swaggerJsdoc.Options = {
             updatedBy: { type: 'string', format: 'uuid', nullable: true, description: 'id do usuário (landlord) que atualizou o status; null quando ainda não há registro gravado.' },
           },
         },
+        Conversation: {
+          type: 'object',
+          required: ['id', 'propertyId', 'landlordId', 'tenantId', 'messages', 'createdAt'],
+          description:
+            'Thread de chat canônica entre um (landlord, tenant) em torno de um Property. O `id` é a referência estável usada pelo frontend (substitui os ids sintéticos antigos `property-<pid>-tenant-<tid>`). Resolvida via GET /api/conversations/resolve (US-012), que faz upsert na chave composta (propertyId, landlordId, tenantId). `messages` é sempre `[]` neste PRD — mensagens de chat estão fora do escopo (futura tabela dedicada).',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            propertyId: { type: 'string', format: 'uuid' },
+            landlordId: { type: 'string', format: 'uuid' },
+            tenantId: { type: 'string', format: 'uuid' },
+            messages: {
+              type: 'array',
+              description: 'Placeholder — sempre vazio enquanto o histórico de mensagens não for persistido nesta tabela.',
+              items: { type: 'object' },
+              example: [],
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
         ErrorResponse: {
           type: 'object',
           properties: {
