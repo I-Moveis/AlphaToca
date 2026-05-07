@@ -160,8 +160,8 @@
         "Tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created tests/propertyPhotoUpload.test.ts with 5 supertest-driven scenarios covering the full happy + error matrix for POST /api/properties photo upload. Follows the existing seedUuidRegression.test.ts pattern: hoisted mocks, Firebase env vars stubbed pre-import, propertyService.createProperty mocked via vi.mock with a spread-preserving factory so other service methods remain intact. Tests: (1) 3 valid JPEGs attached as 'photos' returns 201 with images.length===3, images[0].isCover===true, images[1..2].isCover===false; (2) JSON body with no files returns 201 with images:[]; (3) a text/plain file attachment returns 400 code INVALID_FILE_TYPE and the service is never called; (4) a 10MB+1 byte JPEG returns 400 code FILE_TOO_LARGE; (5) 21 attachments returns 400 code TOO_MANY_FILES. afterEach sweeps any uploads/<propertyId>/ directories created during the test run via fs.rm({recursive,force}) so the repo stays clean even if the mock is ever bypassed. Key design decisions: (a) mocked the service layer (not prisma) because prisma.$transaction is hard to fake and the goal is to exercise the route+middleware+errorHandler pipeline, not the DB; (b) TINY_JPEG is a 4-byte SOI+EOI buffer — multer's fileFilter reads mimetype from the multipart part's Content-Type header, not the binary content, so this is sufficient; (c) reused the full src/app.ts via `import app from '../src/app'` so the real multer middleware and global errorHandler run end-to-end, matching the auth.test.ts and seedUuidRegression.test.ts integration style. Typecheck passes (`npx tsc --noEmit`, no errors). Full suite: 217 passed / 16 failed — the 5 new tests add to the previous 212 pass count, and the 16 failures are the documented pre-existing Auth0→Firebase migration baseline (userSync.test.ts and siblings). Zero regressions."
     }
   ]
 }
