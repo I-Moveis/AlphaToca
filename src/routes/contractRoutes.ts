@@ -35,6 +35,80 @@ router.post('/contracts', contractController.create);
 
 /**
  * @swagger
+ * /contracts:
+ *   get:
+ *     summary: Busca o contrato ACTIVE entre um imóvel e um tenant (US-014)
+ *     description: |
+ *       Retorna o contrato com `status=ACTIVE` que liga o `propertyId` ao
+ *       `tenantId` informados. Contratos TERMINATED/COMPLETED NÃO satisfazem
+ *       a busca — o endpoint é focado no ciclo ativo.
+ *
+ *       Autorização: o caller deve ser o landlord dono do imóvel OU o
+ *       próprio tenant indicado na query. Qualquer outro usuário autenticado
+ *       recebe 403.
+ *
+ *       Resposta projetada (subset deliberado do modelo `Contract`): omite
+ *       `landlordId`, `dueDay`, `status`, `createdAt` e `updatedAt`. Os
+ *       campos `pdfUrl` e `signedAt` são `null` (e não `undefined`) enquanto
+ *       o landlord não fez upload do PDF assinado (PUT /api/contracts/:id/signed-document, US-016).
+ *     tags: [Contratos]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: propertyId
+ *         required: true
+ *         schema: { type: 'string', format: 'uuid' }
+ *       - in: query
+ *         name: tenantId
+ *         required: true
+ *         schema: { type: 'string', format: 'uuid' }
+ *     responses:
+ *       200:
+ *         description: Contrato ACTIVE encontrado.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [id, propertyId, tenantId, startDate, endDate, monthlyRent, pdfUrl, signedAt]
+ *               properties:
+ *                 id: { type: 'string', format: 'uuid' }
+ *                 propertyId: { type: 'string', format: 'uuid' }
+ *                 tenantId: { type: 'string', format: 'uuid' }
+ *                 startDate: { type: 'string', format: 'date-time' }
+ *                 endDate: { type: 'string', format: 'date-time' }
+ *                 monthlyRent: { type: 'number', example: 2500.00 }
+ *                 pdfUrl: { type: 'string', format: 'uri', nullable: true }
+ *                 signedAt: { type: 'string', format: 'date-time', nullable: true }
+ *       400:
+ *         description: Query params inválidos (propertyId/tenantId fora do formato UUID ou ausentes).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Token ausente ou inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Caller não é landlord do imóvel nem o tenant especificado.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Propriedade não encontrada (`NOT_FOUND`) OU sem contrato ACTIVE para o par (`CONTRACT_NOT_FOUND`).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.get('/contracts', contractController.getByPropertyAndTenant);
+
+/**
+ * @swagger
  * /contracts/{id}:
  *   get:
  *     summary: Busca detalhes de um contrato

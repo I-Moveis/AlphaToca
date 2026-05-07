@@ -141,6 +141,67 @@ export async function getContractById(id: string) {
   });
 }
 
+// Forma do Contract exposta por GET /api/contracts?propertyId=&tenantId=
+// (US-014). É um subset deliberado do modelo: omite landlordId/dueDay/status/
+// createdAt/updatedAt para alinhar com o contrato PRD exato. `pdfUrl` e
+// `signedAt` são `null` quando ainda não há PDF assinado anexado (nunca
+// `undefined` — o contrato HTTP promete presença dos campos).
+export type ContractByPropertyTenantView = {
+  id: string;
+  propertyId: string;
+  tenantId: string;
+  landlordId: string;
+  startDate: string;
+  endDate: string;
+  monthlyRent: number;
+  pdfUrl: string | null;
+  signedAt: string | null;
+};
+
+// Retorna o contrato ACTIVE entre um (propertyId, tenantId). O filtro por
+// status='ACTIVE' é intencional: a descrição do PRD US-014 diz "fetch the
+// active contract", então contratos TERMINATED/COMPLETED não satisfazem a
+// chamada mesmo quando os ids batem. `null` quando não há nenhum ACTIVE —
+// traduz-se em 404 CONTRACT_NOT_FOUND no controller.
+//
+// `landlordId` volta no retorno apenas para o controller poder reaproveitar
+// na checagem de autorização (landlord-or-tenant), mas o frontend recebe a
+// projeção sem esse campo via `toContractByPropertyTenantResponse`.
+export async function getActiveContractByPropertyAndTenant(
+  propertyId: string,
+  tenantId: string,
+): Promise<ContractByPropertyTenantView | null> {
+  const row = await prisma.contract.findFirst({
+    where: { propertyId, tenantId, status: 'ACTIVE' },
+    select: {
+      id: true,
+      propertyId: true,
+      tenantId: true,
+      landlordId: true,
+      startDate: true,
+      endDate: true,
+      monthlyRent: true,
+      pdfUrl: true,
+      signedAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    propertyId: row.propertyId,
+    tenantId: row.tenantId,
+    landlordId: row.landlordId,
+    startDate: row.startDate.toISOString(),
+    endDate: row.endDate.toISOString(),
+    monthlyRent: Number(row.monthlyRent),
+    pdfUrl: row.pdfUrl ?? null,
+    signedAt: row.signedAt ? row.signedAt.toISOString() : null,
+  };
+}
+
 export async function listLandlordTenants(landlordId: string) {
   // Finds users who have active contracts with this landlord
   const tenants = await prisma.user.findMany({
