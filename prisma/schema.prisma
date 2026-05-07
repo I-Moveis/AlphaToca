@@ -453,6 +453,12 @@ model Contract {
   // versão assinada armazenada.
   signedAt    DateTime?      @map("signed_at")
   status      ContractStatus @default(ACTIVE)
+  // Estado documental da locação, exposto como chip na tela "Meus Inquilinos"
+  // do landlord (LL-016). Contratos com `signed_at IS NOT NULL` são
+  // backfilled para APPROVED; demais contratos partem do default
+  // PENDING_DOCUMENTS. O flip para AWAITING_SIGNATURE/APPROVED é feito via
+  // PATCH /api/contracts/:id/document-status.
+  documentStatus ContractDocumentStatus @default(PENDING_DOCUMENTS) @map("document_status")
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 
@@ -468,6 +474,14 @@ enum ContractStatus {
   ACTIVE
   TERMINATED
   COMPLETED
+}
+
+// Estado documental do contrato (LL-016). Alimenta o chip de status documental
+// na tela "Meus Inquilinos" do landlord, independente de Contract.status.
+enum ContractDocumentStatus {
+  PENDING_DOCUMENTS
+  AWAITING_SIGNATURE
+  APPROVED
 }
 
 model TenantPayment {
