@@ -17,14 +17,11 @@ export type BroadcastInput = z.infer<typeof broadcastSchema>;
 // ---------------------------------------------------------------------------
 export const broadcastService = {
   /**
-   * Envia uma notificação push para TODOS os usuários com fcmToken registrado.
+   * Envia uma notificação push para TODOS os usuários com fcmToken registrado
+   * E persiste no banco para cada um (histórico de notificações).
    * Usado pela rota POST /admin/broadcast (apenas ADMIN).
-   *
-   * Não persiste no banco — é uma mensagem genérica sem userId específico.
-   *
-   * @returns Objeto com contagem de envios bem-sucedidos e falhas.
    */
-  async sendToAll(input: BroadcastInput): Promise<{ sent: number; failed: number }> {
+  async sendToAll(input: BroadcastInput): Promise<{ sent: number; failed: number; persisted: number }> {
     logger.info({ title: input.title }, '[broadcastService] Iniciando broadcast para todos os usuários.');
 
     const result = await pushNotificationService.broadcastToAll(

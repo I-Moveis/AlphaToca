@@ -95,29 +95,48 @@ export const pushNotificationService = {
   },
 
   /**
-   * Broadcast — envia a mesma notificação push para TODOS os usuários com fcmToken registrado.
+   * Broadcast — envia a mesma notificação push para TODOS os usuários com fcmToken registrado
+   * E persiste um registro na tabela notification para cada usuário.
    * Usado pela rota POST /admin/broadcast (sistema de notícias).
-   * Não persiste no banco (mensagem genérica sem userId específico).
    */
-  async broadcastToAll(title: string, body: string, data?: Record<string, string>): Promise<{ sent: number; failed: number }> {
+  async broadcastToAll(title: string, body: string, data?: Record<string, string>): Promise<{ sent: number; failed: number; persisted: number }> {
     if (!admin.apps.length) {
       logger.warn('[Firebase] Tentativa de broadcast, mas o Admin SDK não está inicializado.');
-      return { sent: 0, failed: 0 };
+      return { sent: 0, failed: 0, persisted: 0 };
     }
 
-    // Busca todos os tokens ativos no banco
+    // Busca todos os tokens ativos no banco (traz userId também p/ persistir)
     const users = await prisma.user.findMany({
       where: { fcmToken: { not: null } },
-      select: { fcmToken: true },
+      select: { id: true, fcmToken: true },
     });
 
     const tokens = users.map((u) => u.fcmToken as string);
 
     if (tokens.length === 0) {
       logger.info('[Firebase] Broadcast: nenhum usuário com fcmToken registrado.');
-      return { sent: 0, failed: 0 };
+      return { sent: 0, failed: 0, persisted: 0 };
     }
 
+    // Persiste uma notification para cada usuário no banco
+    let persisted = 0;
+    try {
+      await prisma.notification.createMany({
+        data: users.map((u) => ({
+          userId: u.id,
+          type: 'BROADCAST' as const,
+          title,
+          body,
+          data: data ?? {},
+        })),
+      });
+      persisted = users.length;
+      logger.info(`[pushNotification] Broadcast persistido p/ ${persisted} usuários`);
+    } catch (err) {
+      logger.error({ err }, '[pushNotification] Falha ao persistir broadcast no banco');
+    }
+
+    // Envia push FCM para todos os devices
     try {
       const message = {
         notification: { title, body },
@@ -127,10 +146,10 @@ export const pushNotificationService = {
 
       const response = await admin.messaging().sendEachForMulticast(message);
       logger.info(`[Firebase] Broadcast enviado. Sucessos: ${response.successCount}, Falhas: ${response.failureCount}`);
-      return { sent: response.successCount, failed: response.failureCount };
+      return { sent: response.successCount, failed: response.failureCount, persisted };
     } catch (error) {
       logger.error({ err: error }, '[Firebase] Falha ao enviar broadcast');
-      return { sent: 0, failed: tokens.length };
+      return { sent: 0, failed: tokens.length, persisted };
     }
   },
 
