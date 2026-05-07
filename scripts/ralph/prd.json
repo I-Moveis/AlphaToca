@@ -94,8 +94,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added `import { propertyPhotoUploadHandler } from '../middlewares/uploadMiddleware'` to src/routes/propertyRoutes.ts and mounted it before propertyController.create on POST /properties (`router.post('/properties', propertyPhotoUploadHandler, propertyController.create)`). Updated propertyController.create to read `req.files as Express.Multer.File[] | undefined` and pass it as the second argument to `propertyService.createProperty(validatedData, files)`. TS's cast-via-`as` is needed because Express's base Request.files type is `{ [fieldname: string]: Express.Multer.File[] } | Express.Multer.File[] | undefined` — we know multer.array() gives us the array shape, so the narrower cast is safe. JSON-only callers (no multer-parsed files) still work unchanged — the service's no-files branch short-circuits and returns `images: []`. Typecheck passes; test baseline unchanged at 16 pre-existing Auth0 failures / 212 pass. Swagger JSDoc comment still documents the JSON-only request body — that's intentionally US-009's scope."
     },
     {
       "id": "US-007",
