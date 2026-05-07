@@ -13,6 +13,8 @@ Started: Thu May  7 04:25:36 PM -03 2026
 - HTTP tests that need to exercise BOTH the 401 stub AND the real 403 from `requireRole` MUST use `vi.mock('../src/middlewares/authMiddleware', async (importOriginal) => { const actual = await importOriginal() as any; return { ...actual, checkJwt: ..., authSyncMiddleware: ... }; })` — i.e. preserve `requireRole` from the real module. The plain object-literal mock form (see `conversationResolve.test.ts`) shadows `requireRole` with a pass-through and makes 403 untestable. See `tests/adminSupportTicketsList.test.ts` for the importOriginal pattern.
 - Role-gated route mounts chain middlewares at the `app.use` level rather than spreading them per route: `app.use('/api', authStack, requireRole(Role.LANDLORD), landlordRoutes)`. Routes inside the router stay flat.
 - `@db.Decimal(10, 2)` columns emit `DECIMAL(10,2)` (not `NUMERIC(10,2)`) in Prisma-generated DDL. When PRD acceptance criteria call for `NUMERIC`, follow `prisma migrate diff` output instead — byte-for-byte match is the ACTUAL acceptance gate. Deserialize Decimal → number in the view with `Number(row.field)` (matches `contractService.getActiveContractByPropertyAndTenant`).
+- `prisma.$queryRaw` tagged-template substitutions (`${value}`) are parameterized as prepared-statement placeholders — safe from SQL injection. For UUID parameters on uuid-typed columns, add a `::uuid` cast in the SQL (`WHERE landlord_id = ${id}::uuid`) so Postgres accepts the string binding. `COUNT(*)` returns `bigint` from Prisma raw queries — coerce with `Number(row.count)` in the TS caller.
+- In service unit tests that call `$queryRaw` multiple times, mock the method with `.mockResolvedValueOnce(...)` chains in the exact order the service issues queries. `vi.clearAllMocks()` in `beforeEach` resets the chain between tests.
 
 ## 2026-05-07 - LL-001 — Profile view tracking table + increment hook
 - Added `ProfileView` Prisma model (landlordId, viewerId?, viewedAt) + inverse relation on `User` + `@@index([landlordId, viewedAt])` + onDelete Cascade.
@@ -67,4 +69,24 @@ Started: Thu May  7 04:25:36 PM -03 2026
   - `upsertCurrent` now does one extra read (active-contract lookup) before the upsert. Acceptable because GET/PUT payments/current is one-property-at-a-time; the lookup is indexed on `contracts.property_id`. If future analytics endpoints SUM(amount) across many properties, they read the already-persisted snapshot — no N+1 on that path.
   - When updating a service signature, the downstream HTTP test (rentalPaymentCurrent.test.ts) that mocks `rentalPaymentService.upsertCurrent` entirely keeps passing because the mock supplies the full response shape. But the *service-level* test (rentalPaymentService.test.ts) needed to be updated to mock the new `prisma.contract.findFirst` — without that mock, `upsertCurrent` throws `findFirst is not a function` during the active-rent lookup.
   - Next migration timestamp should be `>= 20260507210001` to preserve strict lex order. Existing ceiling is now `20260507210000`.
+---
+
+## 2026-05-07 - LL-004 — analyticsService.monthlySeries helper
+- Added `src/services/analyticsService.ts` exposing `monthlySeries(landlordId, from, to): Promise<MonthlySeries>`.
+  - `months`: inclusive YYYY-MM list produced by an in-process `enumerateMonths(from, to)` walker (UTC-aligned with `currentPeriod` in rentalPaymentService) — handles year-boundary crossings, single-month ranges, and `from > to` (returns empty arrays, zero queries issued).
+  - `rentals[m]`: `$queryRaw` over `contracts` grouped by `to_char(start_date, 'YYYY-MM')`, filtered by `landlord_id = ${landlordId}::uuid AND start_date >= ${rangeStart} AND start_date < ${rangeEndExclusive}`.
+  - `newTenants[m]`: subquery `SELECT tenant_id, MIN(start_date) AS first_start FROM contracts WHERE landlord_id = ${landlordId}::uuid GROUP BY tenant_id` wrapped in an outer `WHERE first_start >= rangeStart AND first_start < rangeEndExclusive GROUP BY to_char(first_start, 'YYYY-MM')`. Matches PRD AC: only the tenant's FIRST contract with this landlord counts.
+  - `monthlyRevenue[m]`: joins `rental_payments` ↔ `properties`, filters by `p.landlord_id = ${landlordId}::uuid AND rp.status = 'PAID' AND rp.period BETWEEN fromPeriod AND toPeriod`, `COALESCE(SUM(rp.amount), 0) AS revenue`. Revenue bucket is 0 for months with no paid rows even when Postgres never emits a row for that period (zero-fill via `Map.get(m) ?? 0` in TS).
+- Arrays are guaranteed parallel to `months` via a Map lookup + default for every entry.
+- All three queries use `$queryRaw` tagged-template substitutions — `landlordId` is a prepared-statement parameter, NOT string-interpolated (PRD AC explicit).
+- Files changed: `src/services/analyticsService.ts` (new), `tests/analyticsService.test.ts` (new — 7 tests).
+- Tests: 7/7 pass — 3-month happy path with exact values, gap-month zero-fill, fully empty range, year-boundary (Nov 2025 → Feb 2026 = 4 months), single-month range, from > to early-return, null COALESCE → 0 coercion.
+- `npx tsc --noEmit` clean. Full suite: 429/450 pass — the 21 failures are the same pre-existing set documented in the Codebase Patterns section; net delta is +7 from the new test file.
+- **Learnings for future iterations:**
+  - Prisma `$queryRaw` returns `bigint` for `COUNT(*)` — coerce with `Number(row.count)` in the TS layer. Tests can feed `2n` (BigInt literal) to the mock to exercise the cast.
+  - `to_char(ts, 'YYYY-MM')` in Postgres emits zero-padded months without extra formatting. Aligning ranges on `Date.UTC(year, month, 1)` keeps the JS side in sync with the server-computed period (same choice as `currentPeriod` in rentalPaymentService — no fuso off-by-one).
+  - For UUID columns (like `contracts.landlord_id`), an explicit `${id}::uuid` cast is required when binding a JS string via `$queryRaw`. Without it Postgres raises `invalid input syntax for type uuid` — this repo's `propertyService.ts` established the `::uuid` pattern.
+  - `$queryRaw` is mockable with `.mockResolvedValueOnce(...)` chained in strict call order. The service's call sequence (rentals → newTenants → revenue) is now a load-bearing contract that tests encode — if you re-order the calls in the service, update the test queues to match.
+  - `analyticsService` is ready for LL-005 to consume — the HTTP handler will just validate the range, call `analyticsService.monthlySeries(req.localUser.id, from, to)`, and return the result shape as-is.
+  - Next migration timestamp should be `>= 20260507210001` (unchanged — this story added no migrations).
 ---
