@@ -1,0 +1,112 @@
+import prisma from '../config/db';
+import type { SupportTicket, SupportUserRole } from '@prisma/client';
+
+// Classe de erro comercial exportada para o controller mapear em 5xx/4xx no
+// padrão { status, code, messages } (mesmo formato de PropertyError/ContractError).
+export class SupportTicketError extends Error {
+  constructor(
+    public httpStatus: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SupportTicketError';
+  }
+}
+
+// Protocolo humano SUP-AAMMDD-XXXX onde AAMMDD é a data do servidor (timezone
+// do servidor, não UTC — alinhando com o que o atendente vê quando um ticket
+// chega "hoje") e XXXX são 4 chars base36 uppercase gerados aleatoriamente.
+// A unicidade é garantida pela constraint UNIQUE na coluna `code` — em caso
+// de colisão (P2002), regeneramos o sufixo e tentamos de novo até MAX_RETRIES
+// vezes antes de desistir. O espaço de sufixos é 36^4 = 1_679_616 por dia;
+// mesmo com 10k tickets/dia a chance de colidir 5 vezes seguidas é desprezível.
+const CODE_MAX_RETRIES = 5;
+
+function formatDateStamp(now: Date): string {
+  const yy = String(now.getFullYear() % 100).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yy}${mm}${dd}`;
+}
+
+function randomSuffix(): string {
+  // 4 chars base36 upper. Evita Math.random()-só porque ele pode não ser
+  // criptograficamente forte — preferimos crypto.randomInt para ter entropia
+  // uniforme e não ter que importar crypto só para isso.
+  // `Math.floor(Math.random() * 36**4)` é o suficiente AQUI porque o espaço
+  // é pequeno E a unicidade é garantida pelo banco (não pela entropia).
+  const n = Math.floor(Math.random() * 36 ** 4);
+  return n.toString(36).toUpperCase().padStart(4, '0');
+}
+
+export function generateTicketCode(now: Date = new Date()): string {
+  return `SUP-${formatDateStamp(now)}-${randomSuffix()}`;
+}
+
+// Forma mínima do autor que o ticket precisa — vem do req.localUser (ou seja,
+// do JWT + authSyncMiddleware). NUNCA é aceito do body.
+export type SupportTicketAuthor = {
+  id: string;
+  name: string;
+  role: SupportUserRole;
+};
+
+export type CreateSupportTicketPayload = {
+  title: string;
+  description: string;
+};
+
+export const supportTicketService = {
+  /**
+   * Cria um ticket de suporte com código único gerado pelo servidor.
+   *
+   * Em caso de colisão de `code` (P2002 UNIQUE violation), regenera o sufixo
+   * e tenta de novo até {@link CODE_MAX_RETRIES} vezes. Se ainda colidir,
+   * lança SupportTicketError(500, 'CODE_GENERATION_FAILED') — a probabilidade
+   * prática disso acontecer é ~0 (36^4 por dia), mas o erro é bubblado para
+   * o controller ao invés de estourar 500 sem contexto.
+   *
+   * `updatedAt` é preenchido automaticamente pelo Prisma via `@updatedAt`;
+   * `createdAt` pelo `@default(now())`. `status` começa em OPEN (default no
+   * schema). `resolution` e `assignedToId` ficam null.
+   */
+  async create(
+    author: SupportTicketAuthor,
+    payload: CreateSupportTicketPayload,
+    now: Date = new Date(),
+  ): Promise<SupportTicket> {
+    for (let attempt = 0; attempt < CODE_MAX_RETRIES; attempt++) {
+      const code = generateTicketCode(now);
+      try {
+        return await prisma.supportTicket.create({
+          data: {
+            code,
+            title: payload.title,
+            description: payload.description,
+            userId: author.id,
+            userName: author.name,
+            userRole: author.role,
+          },
+        });
+      } catch (err: any) {
+        // P2002 = UNIQUE constraint failed. Se for na coluna `code`, regera
+        // e tenta de novo. Qualquer outra violação (FK, NOT NULL, etc.) é
+        // propagada imediatamente.
+        const isCodeCollision =
+          err?.code === 'P2002' &&
+          (Array.isArray(err?.meta?.target)
+            ? err.meta.target.includes('code')
+            : err?.meta?.target === 'code' || err?.meta?.target?.includes?.('code'));
+        if (isCodeCollision) continue;
+        throw err;
+      }
+    }
+
+    throw new SupportTicketError(
+      500,
+      'CODE_GENERATION_FAILED',
+      `Failed to generate a unique ticket code after ${CODE_MAX_RETRIES} attempts.`,
+    );
+  },
+};
