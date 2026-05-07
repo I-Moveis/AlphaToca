@@ -51,7 +51,7 @@ const validContractInput = {
   endDate: '2027-05-07T00:00:00.000Z',
   monthlyRent: 2500,
   dueDay: 10,
-  contractUrl: undefined,
+  pdfUrl: undefined,
 };
 
 beforeEach(() => {

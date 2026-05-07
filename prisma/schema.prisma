@@ -420,6 +420,12 @@ model MaintenanceLog {
   @@map("maintenance_logs")
 }
 
+// O modelo Contract é a fonte de verdade do "ciclo ativo de locação" neste
+// codebase — ver progress.txt US-004/US-005. O PRD US-013 oferecia (A) estender
+// RentalProcess ou (B) criar um novo Contract; como o Contract já existia com
+// startDate/endDate/monthlyRent/landlordId/tenantId, a decisão foi estender
+// este modelo com os campos que faltavam para o ciclo digital (`pdfUrl` renomeado
+// a partir de `contractUrl`, `signedAt` novo), sem criar um modelo paralelo.
 model Contract {
   id          String         @id @default(uuid())
   propertyId  String         @map("property_id")
@@ -429,7 +435,14 @@ model Contract {
   endDate     DateTime       @map("end_date")
   monthlyRent Decimal        @map("monthly_rent") @db.Decimal(10, 2)
   dueDay      Int            @map("due_day")
-  contractUrl String?        @map("contract_url")
+  // URL do PDF do contrato (antigo `contractUrl` — renomeado em US-013 para
+  // casar com o contrato exposto na API). Populado pelo PUT
+  // /api/contracts/:id/signed-document (US-016).
+  pdfUrl      String?        @map("pdf_url")
+  // Marca o momento em que o landlord fez upload do PDF assinado. Setado pelo
+  // PUT /api/contracts/:id/signed-document (US-016). `null` enquanto não há
+  // versão assinada armazenada.
+  signedAt    DateTime?      @map("signed_at")
   status      ContractStatus @default(ACTIVE)
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")

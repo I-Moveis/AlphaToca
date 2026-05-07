@@ -26,7 +26,7 @@ const router = Router();
  *               endDate: { type: 'string', format: 'date-time' }
  *               monthlyRent: { type: 'number' }
  *               dueDay: { type: 'integer', minimum: 1, maximum: 31 }
- *               contractUrl: { type: 'string', format: 'uri' }
+ *               pdfUrl: { type: 'string', format: 'uri' }
  *     responses:
  *       201:
  *         description: Contrato criado com sucesso

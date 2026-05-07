@@ -15,7 +15,7 @@ export class ContractError extends Error {
 const TERMINAL_CONTRACT_STATUSES: ContractStatus[] = ['TERMINATED', 'COMPLETED'];
 
 export async function createContract(data: any) {
-  const { propertyId, tenantId, landlordId, startDate, endDate, monthlyRent, dueDay, contractUrl } = data;
+  const { propertyId, tenantId, landlordId, startDate, endDate, monthlyRent, dueDay, pdfUrl } = data;
 
   return prisma.$transaction(async (tx) => {
     // Guard: exactly one ACTIVE contract allowed per property. Any attempt to
@@ -43,7 +43,7 @@ export async function createContract(data: any) {
         endDate: new Date(endDate),
         monthlyRent: new Prisma.Decimal(monthlyRent),
         dueDay,
-        contractUrl,
+        pdfUrl,
         status: 'ACTIVE',
       },
       include: {

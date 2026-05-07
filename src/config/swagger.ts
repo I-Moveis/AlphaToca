@@ -151,6 +151,9 @@ const options: swaggerJsdoc.Options = {
         },
         Contract: {
           type: 'object',
+          required: ['id', 'propertyId', 'tenantId', 'landlordId', 'startDate', 'endDate', 'monthlyRent', 'dueDay', 'status'],
+          description:
+            'Contrato de locação. Fonte de verdade do "ciclo ativo" (status=ACTIVE ⇒ Property.status=RENTED). O campo `pdfUrl` (antigo `contractUrl`) armazena o PDF atualmente anexado — vazio enquanto não há documento; `signedAt` marca o upload do PDF assinado via PUT /api/contracts/:id/signed-document (US-016).',
           properties: {
             id: { type: 'string', format: 'uuid' },
             propertyId: { type: 'string', format: 'uuid' },
@@ -158,10 +161,23 @@ const options: swaggerJsdoc.Options = {
             landlordId: { type: 'string', format: 'uuid' },
             startDate: { type: 'string', format: 'date-time' },
             endDate: { type: 'string', format: 'date-time' },
-            monthlyRent: { type: 'number' },
-            dueDay: { type: 'integer' },
-            status: { type: 'string', enum: ['ACTIVE', 'TERMINATED', 'COMPLETED'] },
-            contractUrl: { type: 'string', format: 'uri' },
+            monthlyRent: { type: 'number', example: 2500.00 },
+            dueDay: { type: 'integer', minimum: 1, maximum: 31 },
+            status: { type: 'string', enum: ['ACTIVE', 'TERMINATED', 'COMPLETED'], default: 'ACTIVE' },
+            pdfUrl: {
+              type: 'string',
+              format: 'uri',
+              nullable: true,
+              description: 'URL do PDF do contrato (quando disponível). Pode ser um path relativo de storage ou uma URL absoluta — clientes devem tratar ambos. `null` enquanto não há documento anexado.',
+            },
+            signedAt: {
+              type: 'string',
+              format: 'date-time',
+              nullable: true,
+              description: 'Instante do upload do PDF assinado. `null` enquanto o landlord ainda não concluiu o ciclo digital.',
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
           },
         },
         TenantPayment: {

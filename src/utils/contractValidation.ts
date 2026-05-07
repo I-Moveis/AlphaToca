@@ -9,7 +9,7 @@ export const createContractSchema = z.object({
   endDate: z.string().datetime(),
   monthlyRent: z.number().positive(),
   dueDay: z.number().int().min(1).max(31),
-  contractUrl: z.string().url().optional(),
+  pdfUrl: z.string().url().optional(),
 });
 
 export const updateContractStatusSchema = z.object({
