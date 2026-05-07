@@ -109,8 +109,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Already implemented on main (src/app.ts:46) — `app.use('/uploads', express.static(path.join(__dirname, '../uploads')))` registered BEFORE the errorHandler at line 132. Deliberately used `path.join(__dirname, '../uploads')` rather than PRD's `path.resolve(process.cwd(), 'uploads')` — this is the established codebase pattern (progress.txt Codebase Patterns) and is more robust because `process.cwd()` changes based on where Node is launched from, whereas `__dirname` is always stable relative to the compiled/source file. Both resolve to the same project-root `uploads/` under ts-node and compiled `dist/`. Functional AC verified via a supertest smoke test (`src/__smoke_us007.ts`, removed after run): (1) GET /uploads/<propertyId>/0001.png → 200 image/png, (2) GET /uploads/missing.jpg → 404, (3) GET /uploads/../package.json (literal) → 404, (4) GET /uploads/..%2Fpackage.json (url-encoded traversal) → 404. Typecheck passes; test baseline unchanged at 16 pre-existing Auth0 failures / 212 pass."
     },
     {
       "id": "US-008",
