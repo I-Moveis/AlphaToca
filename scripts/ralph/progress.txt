@@ -11,6 +11,7 @@ Started: Wed May  6 10:16:09 PM -03 2026
 - `npm install <pkg>` without `--save-dev` puts the package in `dependencies`, even for `@types/*`. Always pass `--save-dev` for type packages.
 - Test suite has 16 pre-existing failures from Auth0 → Firebase migration (tests reference removed `userService.upsertUserFromAuth0`). Not caused by recent stories; verify regressions by running `git stash -u && npm test` vs. current.
 - API error response shape across the codebase: `{ status: number, code: string, messages: [{ message: string }] }` (see `src/middlewares/authMiddleware.ts`). Stay consistent when adding new error branches.
+- Uploads directory lives at project root. `src/app.ts` uses `path.join(__dirname, '../uploads')`; services under `src/services/` should use `path.join(__dirname, '../../uploads')` so both ts-node (from `src/`) and compiled (from `dist/`) resolve to the same project-root `uploads/`.
 
 ---
 
@@ -39,4 +40,28 @@ Started: Wed May  6 10:16:09 PM -03 2026
   - Per PRD, `fileFilter` rejects with `cb(new Error('INVALID_FILE_TYPE'))` — do NOT pass `false` as the second arg when rejecting, that would silently drop the file without surfacing the error to the global error handler (US-008 depends on this Error bubbling up).
   - When adding a new middleware file, verify there are no regressions by running `git stash -u && npm test` before and after — the suite currently has 16 pre-existing Auth0-migration failures, so "16 failed" is the baseline, not a new regression.
   - `propertyPhotoUpload.array('photos', 20)` in US-002 defines field name `photos` and max count 20 — US-006 and US-010 must reference the same field name or uploads will route to `LIMIT_UNEXPECTED_FILE`.
+---
+
+## 2026-05-06 - US-003
+- Created `src/services/propertyImageStorageService.ts`.
+- Exports `savePropertyImages(propertyId, files)`:
+  - Early-returns `[]` when files is empty so callers can branch without guards.
+  - `mkdir(uploads/<propertyId>/, { recursive: true })`, then sequentially writes each file as `<randomUUID()>.<ext>` where `ext` is derived strictly from `file.mimetype` via a lookup table (`image/jpeg`→`jpg`, `image/png`→`png`) — unknown MIME throws `Error('INVALID_FILE_TYPE')` as a belt-and-suspenders defense if US-002's filter is ever bypassed.
+  - `file.originalname` is never used, so malicious/weird filenames can't poison the filesystem.
+  - Returns `{ url: '/uploads/<propertyId>/<uuid>.<ext>', isCover: i === 0 }[]`.
+  - On any writeFile failure mid-loop, `Promise.all`-deletes the already-written files, `rmdir`s the (now-empty) dir, and rethrows the original error.
+- Exports `cleanupPropertyImages(propertyId, urls)`:
+  - Uses `path.basename(url)` to extract the filename segment (ignoring the `/uploads/<propertyId>/` prefix), then `rm` per-file.
+  - ENOENT on individual file deletes is swallowed; all other errors rethrow.
+  - Finally attempts `rmdir` of the property dir; ENOENT/ENOTEMPTY/EEXIST are swallowed (matches PRD "deletes the directory if empty").
+- UPLOADS_ROOT resolution: `path.join(__dirname, '../../uploads')` — mirrors `src/app.ts`'s `path.join(__dirname, '../uploads')` pattern so it lands at project-root `uploads/` both under ts-node (src/services/) and compiled (dist/services/).
+- Typecheck (`npx tsc --noEmit`) passes. Test suite still 16 failed / 212 passed — same pre-existing Auth0-migration baseline (the new service is not imported anywhere yet, so zero regressions were possible).
+- Files changed: `src/services/propertyImageStorageService.ts` (new).
+- **Learnings for future iterations:**
+  - For fs-touching services under `src/services/`, use `path.join(__dirname, '../../uploads')`. `app.ts` uses `../uploads` because it lives one directory above services. Both resolve to the same project-root `uploads/` at dev (ts-node reads `src/`) and prod (compiled `dist/`) — this is the pattern in the codebase, don't use `process.cwd()` ad-hoc.
+  - `crypto.randomUUID()` is globally available in Node 18+ (Node 20 is the project target) — no need to import from `crypto` in modern code, but importing `{ randomUUID } from 'crypto'` makes it explicit and is harmless.
+  - `fs.rmdir` (non-recursive) throws `ENOTEMPTY` when the directory has contents and `ENOENT` when it's missing. Both should typically be swallowed for "delete if empty" semantics. `fs.rm(path, { recursive: true, force: true })` is the nuclear option but violates the PRD's "directory if empty" contract here.
+  - Deriving file extensions from `file.mimetype` rather than `file.originalname` is the secure default — never trust the client's filename. Keep a MIME→ext lookup table in the service even though the multer `fileFilter` should have already blocked unknown types; it's belt-and-suspenders and also gives a semantic `.jpg`/`.png` (not `.jpeg`).
+  - US-002's `fileFilter` rejects bad MIME types with `Error('INVALID_FILE_TYPE')` — reuse the same error message string here so US-008's global handler only needs one match.
+  - When `npm test` fails, check the pre-existing baseline before blaming your change. Current baseline: 4 files / 16 tests failed (all Auth0 migration leftovers in `userSync.test.ts` and siblings calling the removed `userService.upsertUserFromAuth0`).
 ---

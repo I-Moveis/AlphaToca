@@ -48,8 +48,8 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created src/services/propertyImageStorageService.ts. UPLOADS_ROOT resolves via path.join(__dirname, '../../uploads') — consistent with src/app.ts static-serving (__dirname/../uploads) so both dev (ts-node src/) and build (dist/) land at project-root uploads/. savePropertyImages early-returns [] when files is empty, derives ext strictly from MIME ('image/jpeg'->'jpg', 'image/png'->'png') via a lookup table (throws Error('INVALID_FILE_TYPE') if the filter is bypassed — belt-and-suspenders against US-002 regressions), mkdir {recursive:true}, then iterates writing files with randomUUID().ext filenames. On any writeFile failure, already-written files + the dir are cleaned up before rethrow. cleanupPropertyImages uses path.basename(url) to extract the filename (ignoring the URL prefix) and rmdir on the dir, swallowing ENOENT/ENOTEMPTY/EEXIST. Typecheck passes; test suite shows 16/212-passing with the same pre-existing Auth0 baseline — zero regressions since no existing code imports the new service yet."
     },
     {
       "id": "US-004",
