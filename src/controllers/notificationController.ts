@@ -1,22 +1,44 @@
 import { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import prisma from '../config/db';
+import { notificationService } from '../services/notificationService';
+
+const listNotificationsQuerySchema = z.object({
+  unreadOnly: z.enum(['true', 'false']).optional(),
+});
 
 export const notificationController = {
   /**
-   * GET /notifications
-   * Lista todas as notificações do usuário autenticado (mais recentes primeiro).
+   * GET /notifications?unreadOnly=true
+   *
+   * Lists the authenticated user's cross-device notification history (US-013).
+   * Returns a bare array of `NotificationView` items, newest first.
    */
   async list(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).localUser.id;
+      const userId = (req as any).localUser?.id;
+      if (!userId) {
+        return res.status(401).json({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          messages: [{ message: 'Unauthenticated.' }],
+        });
+      }
 
-      const notifications = await prisma.notification.findMany({
-        where: { userId },
-        orderBy: { sentAt: 'desc' },
-        take: 50,
+      const parsed = listNotificationsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({
+          status: 400,
+          code: 'VALIDATION_ERROR',
+          messages: parsed.error.issues.map((i) => ({ message: i.message, path: i.path })),
+        });
+      }
+
+      const notifications = await notificationService.listForUser(userId, {
+        unreadOnly: parsed.data.unreadOnly === 'true',
       });
 
-      return res.status(200).json({ data: notifications });
+      return res.status(200).json(notifications);
     } catch (error) {
       next(error);
     }

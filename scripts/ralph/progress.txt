@@ -33,6 +33,10 @@ Started: Thu May  7 2026 (backend-gaps-finais)
 - **Scope-gated field downgrades belong in the CONTROLLER, not the service** (US-012). When an AC says "if req.localUser lacks the X scope, force field=SAFE_VALUE", the check lives next to where `req.localUser` is accessible — the controller layer. The service stays a pure persistence layer that honors whatever it's handed, so the future scoped flow (when the scope actually lands) persists the real value without re-plumbing the service signature. Pattern lives in `visitController.create` via `callerHasAiAgentScope(req)` + `effectiveSource = hasScope ? input.source : VisitSource.MANUAL`. When the scope exists, flip the helper from `return false` to a real claim check — service layer and all service-level tests stay untouched.
 - **Test layer mirrors guard layer** (US-012). Service-level tests (`tests/visitSource.test.ts`) assert the pure-persistence contract: "if called with source=AI, persist AI" — that's what the service does and will always do. Controller-level tests (`tests/visitController.test.ts`) assert the end-to-end HTTP contract: "if the body sends source=AI from a user without the scope, the service is called with source=MANUAL". Use `not.toHaveBeenCalledWith(expect.objectContaining({ source: 'AI' }))` as a sanity-check assertion to lock in that the bad value never reached the service. When updating a test's describe block to clarify layer semantics, also add a docblock inline explaining the layer boundary so the next reader doesn't restore the "fix" by aligning the service test with the controller test.
 - **Postgres `CREATE TYPE ... AS ENUM` is strictly stronger than a `CHECK` constraint**, and it's the canonical Prisma way. When an AC asks for a CHECK constraint matching an enum's values, the enum column is sufficient — the DB rejects non-enum values at the type level (before any row is inserted), with compile-time safety in the generated Prisma client as a bonus. Do not add a separate `ALTER TABLE ADD CONSTRAINT CHECK (col IN (...))` — it's redundant with the enum type and creates a maintenance burden (CHECK + enum must be kept in sync manually).
+- **Data-preserving field renames use `ALTER TABLE RENAME COLUMN`, NOT DROP + ADD** (US-013). `npx prisma migrate diff` emits `DROP COLUMN "x", ADD COLUMN "y"` whenever a field is renamed in `schema.prisma` — it can't tell the two are related, so it assumes the old data should be thrown away. On a live DB this would delete every row's history. The hand-authored migration must translate that back to `ALTER TABLE "t" RENAME COLUMN "x" TO "y";`. Lock the intent with a migration-SQL assertion test that explicitly asserts `.not.toMatch(/DROP COLUMN "sent_at"/)` so a future Prisma regeneration can't silently revert to the destructive pair. Pattern lives in `tests/notificationMigration.test.ts`.
+- **Cross-device history persists for ALL users, not just users with an FCM token** (US-013 broadcast). A "cross-device notification history" is only cross-device if it survives the FCM push — i.e., if a user opens the app tomorrow on a device that was offline today, they should still see the broadcast. `broadcastService.sendToAll` now SELECTs every user via `prisma.user.findMany({ select: { id, fcmToken } })` and creates one Notification row per user via `createMany` inside a `$transaction`, THEN dispatches FCM to only the token-holders. If persistence throws (DB down), the FCM dispatch is NEVER attempted — the DB is the source of truth, and a push without a history row is worse than no push at all (the user clicks the push, app opens to /notifications, list is empty → confusion).
+- **Bare array responses for per-user list endpoints** (US-003 support tickets, US-013 notifications). The project convention is: GET endpoints that return a user's own list (support tickets, notifications) return a bare JSON array; admin/paginated endpoints return `{ data, total, page, ... }` envelopes. The /notifications endpoint's OLD shape was `{ data: [...] }` with the full Prisma row; US-013 switched it to a bare array of `NotificationView` (narrow projection) — same move US-003 made. When an AC specifies a bare array shape, do NOT wrap it in an envelope even if the pre-existing endpoint did — the AC shape IS the contract.
+- **`NotificationType` vs `NotificationCategory` are intentionally different enums** (US-013). `NotificationType` is the FCM-dispatch taxonomy (VISIT_SCHEDULED, DOCUMENT_REJECTED, BROADCAST, etc. — one per business trigger); `NotificationCategory` is the coarser UX bucket the /notifications screen uses to colour-code groups (update / announcement / system). A future refactor might be tempted to merge them — don't: the FCM dispatch code needs fine-grained types for deep-link routing, while the UX needs a 3-way bucket for grouping. Keep them separate; the existing `type` column stays on the Notification model as a secondary field for the future-case where the /notifications screen needs to deep-link into the trigger.
 
 ---
 
@@ -602,4 +606,191 @@ Before US-012, `visitController.create` parsed the body (`createVisitSchema` acc
 - **Test-layer semantics mirror guard-layer semantics**. Service-level tests assert the pure-persistence contract ("if called with X, persist X"). Controller-level tests assert the HTTP contract ("if the body sends X but the caller lacks scope Y, the service is called with SAFE_VALUE"). Use `not.toHaveBeenCalledWith(expect.objectContaining({ field: BAD_VALUE }))` as a sanity-check assertion to lock in that the bad value never reached the service — belt-and-braces beyond the positive `toHaveBeenCalledWith(SAFE_VALUE)` assertion. Add a docblock on any service-level test whose description could be misread as "the HTTP contract allows X", explaining the layer boundary so a future reader doesn't "fix" it by aligning the two layers.
 - **`CREATE TYPE ... AS ENUM` is stronger than a `CHECK` constraint**. When an AC asks for a CHECK constraint matching an enum's values, the enum column is sufficient — the DB rejects non-enum values at the type level (before any INSERT), and the Prisma client gets compile-time type safety as a bonus. Don't add a separate `ALTER TABLE ADD CONSTRAINT CHECK (col IN (...))` — it's redundant with the enum and has to be manually kept in sync if the enum changes. Document the deviation in the PRD notes.
 - **Next up is US-013 (Notification model)**. Unlike US-012, US-013 has a KNOWN schema conflict flagged in an earlier Codebase Pattern — the existing `Notification` model uses `sentAt` + `NotificationType` enum, but the US-013 AC asks for `receivedAt` + a fresh `NotificationCategory { update announcement system }` enum. Before writing, check: (a) does the US-013 AC want a RENAME migration (sentAt → receivedAt, add category enum alongside type), or a separate second model? (b) `grep -rn NotificationType src/ tests/` to see every caller that would need updating if the field/enum changes names. The existing `pushNotificationService` is the main caller — renaming could cascade into FCM dispatch code. Expect non-trivial code churn.
+---
+
+## 2026-05-07 - US-013 (Notification model + persist on broadcast + GET /api/notifications)
+
+### Status
+
+Real implementation. Not a no-op closure — the existing Notification model from
+the LL FCM-dispatch rollout had a different shape than US-013's AC (column
+`sent_at` vs `received_at`, no `category` enum, no `@@index([userId,
+receivedAt])`, broadcast endpoint did not persist). Extended in place rather
+than adding a parallel model, per the Codebase Pattern flagged during US-010.
+
+### Implemented
+
+- **Schema** (`prisma/schema.prisma`):
+  - Added enum `NotificationCategory { update announcement system }`,
+    distinct from the pre-existing `NotificationType` (FCM-dispatch
+    taxonomy).
+  - Added `category NotificationCategory @default(announcement)` to
+    `Notification`.
+  - Renamed Prisma field `sentAt` → `receivedAt` (with `@map("received_at")`).
+  - Added `@@index([userId, receivedAt], name: "notifications_user_received_at_idx")`
+    alongside the existing `@@index([userId, readAt])` — both are load-bearing
+    (readAt index serves `/notifications/unread-count`, receivedAt serves
+    `/notifications` ordering).
+
+- **Migration** (`prisma/migrations/20260510000000_extend_notification_for_history/migration.sql`):
+  - `CREATE TYPE "NotificationCategory" AS ENUM ('update', 'announcement', 'system');`
+  - `ALTER TABLE "notifications" ADD COLUMN "category" "NotificationCategory" NOT NULL DEFAULT 'announcement';`
+  - `ALTER TABLE "notifications" RENAME COLUMN "sent_at" TO "received_at";`
+    — data-preserving rename. Prisma's `migrate diff` emits `DROP COLUMN
+    "sent_at"` + `ADD COLUMN "received_at"`, which would delete every row's
+    history on a live DB. Hand-authored to use RENAME.
+  - `CREATE INDEX "notifications_user_received_at_idx" ON "notifications"("user_id", "received_at");`
+  - Locked by `tests/notificationMigration.test.ts` (4 assertions, including
+    a negative `.not.toMatch(/DROP COLUMN "sent_at"/)` tripwire so a future
+    Prisma regeneration can't silently revert the rename to a destructive
+    DROP + ADD).
+
+- **New service** (`src/services/notificationService.ts`):
+  - Exports `NotificationView = { id, title, body, receivedAt (ISO), read (bool), category }`.
+  - `listForUser(userId, { unreadOnly? })` — narrow `select:` (drops `type`,
+    `data`, internal `readAt` in favor of derived `read: readAt !== null`),
+    `orderBy: { receivedAt: 'desc' }`, `take: 200`. When `unreadOnly === true`,
+    adds `readAt: null` to the where clause.
+
+- **Controller** (`src/controllers/notificationController.ts`):
+  - `list` now validates `?unreadOnly=true|false` via Zod
+    (`listNotificationsQuerySchema`), returning 400 `VALIDATION_ERROR` for
+    any other value.
+  - Returns a bare JSON array (not the pre-US-013 `{ data: [...] }` envelope)
+    — matches the AC shape and aligns with the US-003 user-view convention
+    (bare arrays for per-user list endpoints).
+  - 401 guard for missing `req.localUser`.
+  - Other methods (`markAsRead`, `markAllAsRead`, `unreadCount`) untouched.
+
+- **Broadcast persistence** (`src/services/broadcastService.ts`):
+  - `sendToAll` now (a) SELECTs **every** user (not just those with
+    `fcmToken` — cross-device history must survive users who never registered
+    a token), (b) wraps `notification.createMany` in `prisma.$transaction`
+    emitting one row per user with `type: BROADCAST, category: announcement,
+    title, body`, (c) then dispatches FCM via the existing
+    `pushNotificationService.broadcastToAll` (HTTP, outside the tx).
+  - Return shape extended from `{ sent, failed }` to `{ sent, failed, persisted }`.
+  - If persistence throws, FCM is NEVER dispatched — history is the source
+    of truth.
+
+- **Admin controller** (`src/controllers/adminController.ts`):
+  - `sendBroadcast` passes `persisted` through to the 200 body. Additive;
+    existing clients ignore unknown fields.
+
+- **Swagger** (`src/routes/notificationRoutes.ts`):
+  - Updated GET /notifications doc to reflect the new shape, `?unreadOnly`
+    query param, and the 400 branch.
+
+### Tests
+
+- `tests/notificationsList.test.ts` (9 route-level cases):
+  1. 200 + array of 2 items ordered DESC, service called with `{ unreadOnly: false }`.
+  2. 200 + `[]` for a user with no notifications.
+  3. `?unreadOnly=true` forwards `{ unreadOnly: true }` to the service.
+  4. `?unreadOnly=false` forwards `{ unreadOnly: false }` explicitly.
+  5. 400 `VALIDATION_ERROR` for `?unreadOnly=yes`.
+  6. Item shape has the 6 required fields + negative `not.toHaveProperty`
+     for `type`, `data`, `userId`, `readAt`, `sentAt` — locks in the
+     boundary between the FCM-internal schema and the end-user view.
+  7. User A isolation — service called with `USER_A_ID`.
+  8. User B isolation — service called with `USER_B_ID`.
+  9. 401 UNAUTHORIZED when the Authorization header is missing.
+
+- `tests/notificationService.test.ts` (6 service-level cases):
+  1. Query shape — `where: { userId }`, `orderBy: { receivedAt: 'desc' }`,
+     `take: 200`, exact 6-field `select:`.
+  2. `unreadOnly=true` → where clause has `readAt: null`.
+  3. `unreadOnly=false` → where clause does NOT have `readAt` key (not the
+     same as having `readAt: undefined`).
+  4. readAt=null → read:false + ISO serialization of receivedAt.
+  5. readAt=<Date> → read:true.
+  6. Order preservation — service does not re-sort after the DB.
+
+- `tests/broadcastPersistence.test.ts` (4 cases):
+  1. Happy path — 3 users, `createMany` called with exact data array of 3
+     objects (each with `type: BROADCAST, category: announcement, title,
+     body`), then `broadcastToAll` dispatched with `{ type: 'BROADCAST' }`,
+     return `{ sent: 2, failed: 0, persisted: 3 }`.
+  2. Empty user list — `$transaction` never called, `createMany` never
+     called, return `{ sent: 0, failed: 0, persisted: 0 }`.
+  3. Users without fcmToken still get persisted rows (cross-device history
+     is not FCM-dependent).
+  4. `createMany` throws → `broadcastToAll` NEVER called (DB is the source
+     of truth).
+
+- `tests/notificationMigration.test.ts` (4 migration-SQL assertions): CREATE
+  TYPE shape, ADD COLUMN clause, RENAME-not-DROP tripwire, CREATE INDEX
+  clause.
+
+### Files changed
+
+- `prisma/schema.prisma` — NotificationCategory enum + Notification model
+  changes (category column, sentAt → receivedAt rename, new index).
+- `prisma/migrations/20260510000000_extend_notification_for_history/migration.sql` —
+  new hand-authored migration (CREATE TYPE + ADD COLUMN + RENAME COLUMN +
+  CREATE INDEX).
+- `src/services/notificationService.ts` — NEW file (NotificationView +
+  listForUser).
+- `src/controllers/notificationController.ts` — `list` rewritten for the new
+  shape + unreadOnly validation.
+- `src/routes/notificationRoutes.ts` — Swagger doc updated.
+- `src/services/broadcastService.ts` — sendToAll now persists + dispatches.
+- `src/controllers/adminController.ts` — sendBroadcast returns `persisted`.
+- `tests/notificationsList.test.ts` — NEW (9 cases).
+- `tests/notificationService.test.ts` — NEW (6 cases).
+- `tests/broadcastPersistence.test.ts` — NEW (4 cases).
+- `tests/notificationMigration.test.ts` — NEW (4 cases).
+- `scripts/ralph/prd.json` — flip US-013 `passes: true`.
+- `scripts/ralph/progress.txt` — this entry + 4 new Codebase Patterns.
+
+### Results
+
+- Typecheck: `npx tsc --noEmit` clean.
+- Targeted: `npx vitest run tests/notificationsList.test.ts tests/notificationService.test.ts tests/broadcastPersistence.test.ts tests/notificationMigration.test.ts` → 23/23 pass.
+- Full suite: **23 failed / 665 passed / 72 files** — +23 new passing tests
+  vs US-012 baseline of 642; same 6 pre-existing failing files
+  (auth/rag/ingest/userSync/visitValidation). Zero regression.
+
+### Learnings for future iterations
+
+- **`prisma migrate diff` cannot distinguish rename from DROP + ADD**. Any
+  time you rename a Prisma field that maps to an existing column, the diff
+  script will emit a destructive DROP + ADD pair. On a live DB that means
+  lost history. The hand-authored migration must translate that back to
+  `ALTER TABLE ... RENAME COLUMN old TO new;`. Lock the intent with a
+  migration-SQL assertion test that explicitly asserts the ABSENCE of
+  `DROP COLUMN "old"` via `.not.toMatch(...)` — pattern lives in
+  `tests/notificationMigration.test.ts`. This is the second layer of
+  protection beyond "the reviewer reads the SQL carefully".
+- **US-014 is the natural next step** — it asks for `PUT /api/notifications/:id/read`.
+  Check `src/controllers/notificationController.ts` first: there's already a
+  `markAsRead` method wired to `PATCH /notifications/:id/read` (not PUT).
+  Per the US-007/US-008 precedent ("PATCH vs PUT for single-field updates"),
+  the existing PATCH IS the AC — introducing a parallel PUT would duplicate
+  coverage. The real gaps are (a) the response shape (current returns
+  `{ data: updatedRow }`; AC wants 204 No Content), (b) idempotency
+  semantics (current code re-updates `readAt = new Date()` every call; AC
+  wants "return 204 without updating if already set"). Single-controller
+  edit + 3-4 tests.
+- **Bare array vs envelope is a per-consumer decision**. The /notifications
+  endpoint's envelope was a pre-existing design choice from the FCM rollout;
+  the US-013 AC overrides it explicitly. Don't assume "existing shape = correct
+  shape" — the AC is authoritative when it's explicit about the response shape.
+- **Database rename migrations need extra scrutiny** because `prisma migrate
+  dev` regenerates them from the schema and doesn't preserve hand edits on
+  re-run. This codebase forbids `prisma migrate dev` (Codebase Patterns), so
+  the hand-authored version is authoritative. If anyone ever runs
+  `migrate dev` against this schema, it will regenerate a DROP + ADD diff
+  and destroy the rename — the migration-SQL assertion test becomes the
+  tripwire that catches this in CI.
+- **Extend before adding parallel models**. The earlier Codebase Pattern
+  about Notification was explicit: "it must NOT add a duplicate model —
+  it needs to either (a) extend the existing model with category + rename
+  sent_at → receivedAt via a hand-authored migration, or (b) add the missing
+  fields while keeping sentAt as an alias." Went with (a) because the
+  existing consumers of `sentAt` were minimal (1 orderBy in
+  notificationController + 1 line in Swagger), and keeping two timestamp
+  columns for the same event (sent vs received) would be conceptually
+  confusing. The rename is clean and the migration-SQL test locks in data
+  preservation.
 ---
