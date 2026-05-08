@@ -156,7 +156,7 @@ export const supportTicketService = {
 
   /**
    * Lista tickets do próprio usuário (não-admin). Sem paginação,
-   * ordenado por createdAt DESC.
+   * ordenado por createdAt DESC. Inclui a última mensagem como preview.
    */
   async listForUser(userId: string) {
     return prisma.supportTicket.findMany({
@@ -308,4 +308,17 @@ export type UpdateSupportTicketForAdminPayload = {
   status?: SupportTicketStatus;
   resolution?: string;
   assignedToId?: string;
+};
+
+// Shape retornada pelo GET /api/support/tickets (US-003). Campos mínimos que
+// o dono do ticket precisa na tela /support — sem info de admin (assignee,
+// resolution, updatedAt, etc.). `createdAt` é ISO string para evitar
+// diferenças de serialização JSON vs Date entre controllers.
+export type SupportTicketUserView = {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  createdAt: string;
+  status: SupportTicketStatus;
 };

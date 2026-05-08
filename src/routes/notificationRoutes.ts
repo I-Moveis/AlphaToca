@@ -31,40 +31,43 @@ router.get('/notifications/unread-count', notificationController.unreadCount);
  * @swagger
  * /notifications:
  *   get:
- *     summary: Lista as notificações do usuário autenticado (últimas 50)
+ *     summary: Lista as notificações do usuário autenticado (US-013, histórico cross-device)
  *     tags: [Notifications]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: unreadOnly
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *         description: Quando 'true', filtra apenas notificações com readAt IS NULL.
  *     responses:
  *       200:
- *         description: Lista de notificações
+ *         description: Lista de notificações (array) ordenada por receivedAt DESC
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       id:
- *                         type: string
- *                       type:
- *                         type: string
- *                       title:
- *                         type: string
- *                       body:
- *                         type: string
- *                       data:
- *                         type: object
- *                       readAt:
- *                         type: string
- *                         format: date-time
- *                         nullable: true
- *                       sentAt:
- *                         type: string
- *                         format: date-time
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   title:
+ *                     type: string
+ *                   body:
+ *                     type: string
+ *                   receivedAt:
+ *                     type: string
+ *                     format: date-time
+ *                   read:
+ *                     type: boolean
+ *                   category:
+ *                     type: string
+ *                     enum: [update, announcement, system]
+ *       400:
+ *         description: Parâmetro de query inválido
  *       401:
  *         description: Token ausente ou inválido
  */
@@ -118,5 +121,36 @@ router.patch('/notifications/read-all', notificationController.markAllAsRead);
  *         description: Token ausente ou inválido
  */
 router.patch('/notifications/:id/read', notificationController.markAsRead);
+
+/**
+ * @swagger
+ * /notifications/{id}/read:
+ *   put:
+ *     summary: Marca uma notificação como lida (idempotente, cross-device — US-014)
+ *     description: |
+ *       Variante idempotente do mark-as-read. Se a notificação já está lida,
+ *       retorna 204 sem atualizar `readAt` (preserva o timestamp original do
+ *       primeiro dispositivo que a leu). Sempre retorna 204 em caminhos
+ *       felizes — clientes podem usar fire-and-forget sem parsear o body.
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       204:
+ *         description: Notificação marcada (ou já estava marcada — idempotente)
+ *       401:
+ *         description: Token ausente ou inválido
+ *       403:
+ *         description: Notificação não pertence ao usuário
+ *       404:
+ *         description: Notificação não encontrada
+ */
+router.put('/notifications/:id/read', notificationController.markAsReadIdempotent);
 
 export default router;

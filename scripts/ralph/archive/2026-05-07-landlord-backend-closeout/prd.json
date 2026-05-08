@@ -1,0 +1,303 @@
+{
+  "project": "I-Moveis",
+  "branchName": "ralph/backend-gaps-finais",
+  "description": "Backend P4 — Fechar Gaps Finais pós-Landlord Rollout. Continuação do rollout P1→P3 (US-001 a US-020 já entregues). Cobre os itens 1–12 da priorização §8 do GAPS_FINAIS.md: (a) bugs ativos visíveis nos logs do frontend — imagens do /uploads não carregam, GET /api/conversations dá timeout, GET /api/support/tickets dá timeout; (b) endpoints que completam telas já iniciadas — payments multi-mês, Contract.documentStatus, echo do POST ticket; (c) melhorias — landlord/metrics, per-property analytics, Visit.source MANUAL|AI, Notification persistido cross-device (GET + PUT read), expansão do PropertyType enum e amenidades (hasWifi, hasPool). Decisões de produto abertas (thread chat de ticket §1.3/§4.4, TransactionType §6.3, isIdentityVerified §2.6, gráfico mensal §2.2, instrumentação de telemetria) ficam em Open Questions do PRD e NÃO entram neste rollout. Zero quebras nas respostas entregues pelas US-001→US-020. 5 migrations aditivas (documentStatus, Visit.source, Notification model, PropertyType enum +4 valores, hasWifi/hasPool).",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Investigate image loading root cause (/uploads 404/CORS)",
+      "description": "As backend dev, I need to confirm which of the 3 hypotheses from GAPS_FINAIS.md §1.4 is causing the placeholder-of-house in the landlord 'Gestão de Aluguéis' screen and property detail page, so US-002 fix is targeted.",
+      "acceptanceCriteria": [
+        "Run `ls uploads/` at repo root and confirm which propertyId directories exist and contain .jpg files — list in progress.txt learnings",
+        "Pick one property with known images (check prisma/seed.ts or `psql` the PropertyImage table) and curl `http://localhost:3000/uploads/<propertyId>/<file>.jpg` — record status code, Content-Type, and presence/absence of Access-Control-Allow-Origin header in progress.txt",
+        "Check `src/app.ts` around line 47: confirm whether `cors()` middleware is applied BEFORE or AFTER `express.static('/uploads', ...)` — document the ordering in progress.txt learnings",
+        "Document the confirmed root cause (hypothesis 1=CORS, 2=missing file, 3=Content-Type) in progress.txt — US-002 reads this to pick the fix",
+        "NO code changes in this story — investigation only",
+        "progress.txt has a clear 'Root cause: <hypothesis N>' line so US-002 can act on it"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Apply /uploads fix so property images serve correctly",
+      "description": "As a user (landlord or tenant), I want property photos to load instead of the house placeholder on the landlord rentals screen and property detail page.",
+      "acceptanceCriteria": [
+        "Apply the fix identified in US-001 progress.txt (most likely: move `app.use(cors(...))` BEFORE `app.use('/uploads', express.static(...))` in src/app.ts)",
+        "If fix is CORS: the cors() options must allow the Flutter web origin (localhost:5173 or whatever ALLOWED_ORIGINS env accepts); fall through for native mobile (no Origin header)",
+        "`curl -i http://localhost:3000/uploads/<known-propertyId>/<file>.jpg -H 'Origin: http://localhost:5173'` responds 200 with `Content-Type: image/jpeg` and `Access-Control-Allow-Origin: http://localhost:5173`",
+        "If root cause was missing files (hypothesis 2), document the backfill approach in progress.txt and patch the upload handler to log the absolute path it writes to",
+        "No regressions in existing multipart upload flow (POST /api/properties and PUT /api/properties/:id with photos[] still write files to uploads/<propertyId>/)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "GET /api/support/tickets — user lists own tickets",
+      "description": "As an authenticated tenant or landlord, I want to see the list of support tickets I created, so the /support screen stops falling back to local cache and stops timing out in the logs (GAPS_FINAIS.md §1.2, §4.1).",
+      "acceptanceCriteria": [
+        "Add `GET /api/support/tickets` route in `src/routes/supportTicketRoutes.ts` (or existing ticket routes file — grep first) behind authStack (checkJwt + authSyncMiddleware)",
+        "Controller filters `where: { userId: req.localUser.id }` and orders `createdAt DESC`",
+        "Response: array of `{ id, code, title, description, createdAt, status }` — match the shape the frontend cache already expects per GAPS_FINAIS.md §347",
+        "Does NOT expose any other user's tickets — tests/supportTicketsList.test.ts covers: user A sees only their tickets, user B sees only theirs",
+        "Uses same `supportTicketService` pattern as existing admin list endpoint (US-019) — extract a shared query helper if needed, don't copy-paste",
+        "Follow the `importOriginal` authMiddleware mock pattern noted in archived progress.txt Codebase Patterns when writing tests that assert 401/403",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "GET /api/conversations — list user conversations",
+      "description": "As an authenticated user, I want to see my conversations on the /chat screen so the listing doesn't depend only on the /resolve 1:1 resolver — fixes the connectionTimeout in GAPS_FINAIS.md §1.1.",
+      "acceptanceCriteria": [
+        "Add `GET /api/conversations` route in conversationRoutes.ts behind authStack",
+        "Optional query param `?unreadOnly=true` filters to conversations with at least one message where readAt IS NULL and authorId != req.localUser.id",
+        "Response: array of `{ id, counterpartName, counterpartAvatarUrl, lastMessage, lastMessageAt, unread (bool), linkedPropertyId, linkedTenantId }` — per GAPS_FINAIS.md §292-306",
+        "For each conversation, resolve counterpart by `Conversation.participants[]` excluding req.localUser.id; if landlord is requester, include `linkedTenantId` (tenant participant's userId)",
+        "Ordering: `lastMessageAt DESC` (use Conversation.lastMessageAt if populated by US-006, else fall back to max(Message.createdAt))",
+        "Only returns conversations where req.localUser.id is in participants",
+        "tests/conversationsList.test.ts covers: empty list, two conversations ordered by lastMessageAt, user filter (user C doesn't see A↔B's conversation)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "GET /api/conversations/:id/messages — paginated message history",
+      "description": "As a conversation participant, I want to page through message history (reverse-keyset) so the chat screen loads older messages on scroll.",
+      "acceptanceCriteria": [
+        "Add `GET /api/conversations/:id/messages` route behind authStack",
+        "Query params: `?before=<messageId>&limit=50`; default limit=50, max=100",
+        "When `before` provided: return messages with `createdAt < (SELECT createdAt FROM Message WHERE id = before)`, ordered `createdAt DESC`, limited",
+        "When `before` omitted: return the most recent `limit` messages, ordered `createdAt DESC`",
+        "Response: array of `{ id, authorId, content, createdAt, readAt }`",
+        "403 if `req.localUser.id` is not in `conversation.participants`",
+        "404 if the conversation does not exist",
+        "tests/conversationMessagesGet.test.ts covers: happy path, pagination via `before`, 403 for non-participant, 404 for missing conversation",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "POST /api/conversations/:id/messages — send message",
+      "description": "As a conversation participant, I want to send a message so the 1:1 chat actually works.",
+      "acceptanceCriteria": [
+        "Add `POST /api/conversations/:id/messages` route behind authStack",
+        "Body: `{ content: string }`; validate non-empty and length <= 4000 (return 400 otherwise with existing error envelope)",
+        "Creates Message with `authorId = req.localUser.id, content, createdAt = now(), readAt = null`",
+        "Same transaction updates `Conversation.lastMessageAt = message.createdAt` (add field to Conversation model if it doesn't exist — hand-authored migration per Codebase Patterns)",
+        "Response 201 with the created message `{ id, authorId, content, createdAt, readAt: null }`",
+        "403 if req.localUser is not a participant",
+        "tests/conversationMessagesPost.test.ts covers: happy path, content validation (empty, too long), 403 for non-participant",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "GET /api/properties/:propertyId/payments — multi-month history",
+      "description": "As a landlord, I want to see the complete payment history for a tenant on the 'Histórico Financeiro' screen instead of the synthetic 1-line fallback (GAPS_FINAIS.md §2.4).",
+      "acceptanceCriteria": [
+        "Add `GET /api/properties/:propertyId/payments?tenantId=:uuid` route behind landlordAuthStack (per existing pattern in propertyRoutes)",
+        "Ownership check: 403 if `property.landlordId !== req.localUser.id`; 404 if property doesn't exist",
+        "Response: array of `{ period: 'YYYY-MM', amount: number, status: 'PAID'|'AWAITING'|'LATE', paidAt: ISO|null }` ordered `period DESC`",
+        "Derive one row per month from `Contract.startDate` up to current month: if a RentalPayment exists for that (propertyId, tenantId, period), use its status+amount+paidAt; else synthesize status=LATE (if past) or AWAITING (if current), amount=contract.monthlyRent, paidAt=null",
+        "Deserialize `@db.Decimal(10,2)` monthlyRent → number with `Number(row.field)` per archived Codebase Patterns",
+        "tests/propertyPaymentsHistory.test.ts covers: contract with 3 months, 2 paid + 1 late; ownership 403; missing property 404; missing tenantId 400",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Contract.documentStatus — migration + GET/PUT wiring",
+      "description": "As a landlord, I want a real tenant document status chip (green/orange/red) in 'Meus Inquilinos' instead of the heuristic based on property.status (GAPS_FINAIS.md §2.5).",
+      "acceptanceCriteria": [
+        "Add Prisma enum `ContractDocumentStatus { APPROVED AWAITING_SIGNATURE PENDING_DOCUMENTS }` to schema.prisma",
+        "Add field `documentStatus ContractDocumentStatus @default(PENDING_DOCUMENTS)` to Contract model",
+        "Hand-author `prisma/migrations/<stamp>_add_contract_document_status/migration.sql` (never run `prisma migrate dev` per archived Codebase Patterns)",
+        "Verify with `npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script` — DDL must match byte-for-byte",
+        "`GET /api/contracts` (existing) now includes `documentStatus` in response shape",
+        "`PUT /api/contracts/:id` (existing) accepts `documentStatus` in body; validates enum value; restricted to LANDLORD who owns the property linked to the contract",
+        "prisma/seed.ts updates existing contract seeds with coherent documentStatus values",
+        "tests/contractDocumentStatus.test.ts covers: GET returns the field, PUT updates it, PUT 403 for non-owner, PUT 400 for invalid enum value",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Echo title/description in POST /api/support/tickets response",
+      "description": "As a frontend dev, I want title and description echoed in the POST ticket response, so the local cache doesn't need to preserve the request body to assemble the ticket (GAPS_FINAIS.md §4.2).",
+      "acceptanceCriteria": [
+        "Modify `POST /api/support/tickets` controller to return `{ id, code, title, description, createdAt, status }` instead of `{ id, code, createdAt }`",
+        "Error contract (400, 401) unchanged",
+        "Existing tests for POST ticket still pass (update them to assert the new fields)",
+        "No change to schema, no migration needed",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "GET /api/landlord/metrics — dashboard cards",
+      "description": "As a landlord, I want the 'Visitas ao perfil' and 'Propostas' cards to show real numbers instead of '—' and a 'métrica ainda não disponível' tooltip (GAPS_FINAIS.md §2.1).",
+      "acceptanceCriteria": [
+        "Add `GET /api/landlord/metrics` route behind landlordAuthStack",
+        "Response: `{ profileViews: number, proposalsPending: number, unreadMessages: number }`",
+        "`profileViews`: reuse the existing ProfileView table from LL-001 (archived run) — count WHERE landlordId = req.localUser.id AND viewedAt >= now() - interval '30 days'. If LL-001's ProfileView model doesn't exist in the current schema, return 0 and add TODO comment in controller (don't create a new table)",
+        "`proposalsPending`: count `Proposal` where `propertyId IN (landlord's properties) AND status = 'PENDING'`",
+        "`unreadMessages`: count Message where `conversation.participants` includes landlord, `authorId != landlord`, `readAt IS NULL` — acceptable to return 0 if query is too costly, with TODO comment",
+        "tests/landlordMetrics.test.ts covers: empty (all zeros), populated case with seeded ProfileView + Proposal + Message, role check (non-landlord gets 403)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "GET /api/properties/:id/analytics — per-property cards",
+      "description": "As a landlord, I want the top cards of the 'Análise do Imóvel' screen to show real data (GAPS_FINAIS.md §2.3).",
+      "acceptanceCriteria": [
+        "Add `GET /api/properties/:id/analytics?window=30d|90d|1y` route behind landlordAuthStack; default window=30d",
+        "Ownership check: 403 if property.landlordId !== req.localUser.id; 404 if property not found",
+        "Response: `{ views, favorites, proposalsTotal, proposalsOpen, visitsScheduled, contactClicks, dailyViews: [{date, count}] }`",
+        "`favorites`: count existing Favorite rows for property (if table exists — grep first)",
+        "`proposalsTotal`, `proposalsOpen`, `visitsScheduled`: real counts over the window",
+        "`views`, `contactClicks`, `dailyViews`: return 0/[] with TODO comment in controller (no telemetry instrumentation exists yet — Open Question #5 in PRD)",
+        "Do NOT create new tracking tables — that's an instrumentation PRD, not this one",
+        "tests/propertyAnalytics.test.ts covers: 30d window, 90d window, 1y window, ownership 403, default window, invalid window (400)",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Visit.source (MANUAL|AI) — migration + endpoint exposure",
+      "description": "As a user of the Smart Agenda, I want visually distinct dots for MANUAL vs AI-scheduled visits (GAPS_FINAIS.md §5.1).",
+      "acceptanceCriteria": [
+        "Add enum `VisitSource { MANUAL AI }` to schema.prisma",
+        "Add field `source VisitSource @default(MANUAL)` to Visit model",
+        "Hand-author `prisma/migrations/<stamp>_add_visit_source/migration.sql` — ALTER TABLE with CHECK constraint matching the enum",
+        "Verify DDL byte-for-byte with `prisma migrate diff`",
+        "All `GET /api/visits*` endpoints include `source` in response",
+        "`POST /api/visits` accepts optional `source` in body; if req.localUser lacks an `ai-agent` scope (which doesn't exist yet — treat as always false), force `source = MANUAL` and ignore the request body value. Add TODO comment referencing Open Question #6",
+        "prisma/seed.ts sets `source: 'MANUAL'` explicitly for existing visit seeds",
+        "tests/visitSource.test.ts covers: GET includes source, POST defaults to MANUAL, POST with source=AI from non-agent user is downgraded to MANUAL",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Notification model + persist on broadcast + GET /api/notifications",
+      "description": "As a user, I want to see my notification history from any device (not just local cache of the current app install) — GAPS_FINAIS.md §7.1.",
+      "acceptanceCriteria": [
+        "Add Prisma enum `NotificationCategory { update announcement system }` to schema.prisma",
+        "Add Prisma model `Notification { id String @id @default(uuid()), userId String, title String, body String, receivedAt DateTime @default(now()), readAt DateTime?, category NotificationCategory @default(announcement), @@index([userId, receivedAt]) }` with FK to User onDelete Cascade",
+        "Hand-author migration; verify DDL with `prisma migrate diff`",
+        "Modify `POST /api/admin/broadcast` (US-019 of prior rollout) to persist one Notification row per target userId in the same transaction as the FCM dispatch",
+        "Add `GET /api/notifications?unreadOnly=true` route behind authStack",
+        "Response: array ordered `receivedAt DESC` of `{ id, title, body, receivedAt, read (bool), category }` where `read = (readAt !== null)`",
+        "Filter: `userId = req.localUser.id` — tests/notificationsList.test.ts asserts no cross-user leak",
+        "tests/notificationsList.test.ts covers: empty list, populated ordered DESC, unreadOnly filter, cross-user isolation",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "PUT /api/notifications/:id/read — cross-device sync",
+      "description": "As a user, I want marking a notification as read on one device to reflect on others (GAPS_FINAIS.md §7.2).",
+      "acceptanceCriteria": [
+        "Add `PUT /api/notifications/:id/read` route behind authStack (depends on Notification model from US-013)",
+        "Only the owner can mark (`notification.userId === req.localUser.id`)",
+        "Sets `readAt = now()` if still NULL; idempotent — if already set, return 204 without updating",
+        "Response: 204 No Content",
+        "403 if caller is not the owner; 404 if notification does not exist",
+        "tests/notificationMarkRead.test.ts covers: happy path, idempotency, 403 for non-owner, 404 for missing id",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Expand PropertyType enum (+KITNET, PENTHOUSE, LAND, COMMERCIAL)",
+      "description": "As a user, I want to pick KITNET, PENTHOUSE (Cobertura), LAND (Terreno), or COMMERCIAL (Comercial) when listing or filtering properties, matching the 8 chips in the UI (GAPS_FINAIS.md §6.1).",
+      "acceptanceCriteria": [
+        "Add `KITNET, PENTHOUSE, LAND, COMMERCIAL` to Prisma `enum PropertyType`",
+        "Hand-author migration using `ALTER TYPE ... ADD VALUE ...` (one per new variant); verify with `prisma migrate diff`. Note: `ALTER TYPE ADD VALUE` cannot run inside a transaction block — migration.sql must not wrap them in BEGIN/COMMIT",
+        "Update Zod/Joi/class-validator schema for `POST /api/properties` and `PUT /api/properties/:id` to accept the new values",
+        "Update validation for `GET /api/properties/search?type=` to accept the new values",
+        "Update prisma/seed.ts — add at least 1 seed property for each new type",
+        "tests/propertyTypeExpansion.test.ts covers: POST with each new type succeeds, PUT with each new type succeeds, search filter by each new type returns seeded row",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Property.hasWifi + Property.hasPool amenities + search filters",
+      "description": "As a user, I want to filter properties by WiFi or pool, and as a landlord I want to mark these amenities on create/edit (GAPS_FINAIS.md §6.2).",
+      "acceptanceCriteria": [
+        "Add `hasWifi Boolean @default(false)` and `hasPool Boolean @default(false)` to Property model",
+        "Hand-author migration; verify DDL byte-for-byte with `prisma migrate diff`",
+        "`POST /api/properties` and `PUT /api/properties/:id` accept both fields in body (validation: boolean)",
+        "`GET /api/properties/:id` response includes both fields",
+        "`GET /api/properties/search` accepts `?hasWifi=true` and `?hasPool=true` query params (combinable with existing filters)",
+        "prisma/seed.ts: set hasWifi/hasPool on some seed properties to enable realistic search filter demos",
+        "tests/propertyAmenities.test.ts covers: POST with amenities, PUT toggles amenities, GET returns amenities, search filter ?hasWifi=true returns only wifi properties, combined ?hasWifi=true&hasPool=true AND-composes",
+        "Typecheck passes (npx tsc --noEmit)",
+        "Tests pass (npx vitest run)"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
