@@ -917,3 +917,76 @@ not as a side-effect of this story.
   an explicit `if (!userId) return 401` as a defensive belt. Cheap insurance.
 
 ---
+
+## 2026-05-07 - US-015 (PropertyType enum expansion — PUT schema + demo seeds)
+
+### Status
+
+Schema + migration + POST/search validation were all delivered by the archived LL-019/LL-020 rollouts (enum values KITNET/PENTHOUSE/LAND/COMMERCIAL in `prisma/schema.prisma:45-54`; migration `20260508040000_add_property_type_extended_values/migration.sql` with 4 `ALTER TYPE "PropertyType" ADD VALUE '...'` statements and no BEGIN/COMMIT wrapper — Postgres rejects `ALTER TYPE ADD VALUE` inside a transaction block, per the AC's explicit callout). `tests/propertyTypeExtended.test.ts` (4 cases) + `tests/propertySearchExtendedTypes.test.ts` (10 cases) already lock the POST/migration/search surface.
+
+This story closed the three **actually remaining** AC items.
+
+### Implemented
+
+- **PUT schema**: added `type: z.nativeEnum(PropertyType).optional()` to `updatePropertySchema` in `src/utils/propertyValidation.ts`. Previously the schema did NOT include `type` at all — not just the new values, the field was absent entirely, so the frontend's property-edit screen had no way to change a property's type. `propertyService.updateProperty` flows the new scalar through to `prisma.property.update({ data: scalarData })` automatically via the `{ photosToRemove, ...scalarData }` destructure — no service change required.
+
+- **Demo seeds**: added 4 new demo properties in `prisma/demoData.ts`, one per new type: Kitnet na Tijuca (KITNET), Cobertura de Luxo no Leblon (PENTHOUSE), Terreno em Barra da Tijuca (LAND), Sala Comercial no Centro (COMMERCIAL). All 4 use `DEMO_LANDLORD_1_ID` as owner + realistic RJ addresses + moderationStatus=APPROVED so they surface in the public search. New UUID-v4 constants `DEMO_PROPERTY_KITNET_ID` / `PENTHOUSE_ID` / `LAND_ID` / `COMMERCIAL_ID` exported from `prisma/demoIds.ts` (ids `b0000005..b0000008`). Existing 5 demo properties kept byte-identical — downstream tests/seeds that reference `DEMO_PROPERTY_RJ_4_ID` etc. continue to pass unchanged.
+
+- **Test registry updates**: `tests/seed.test.ts` `DEMO_PROPERTY_IDS` Set and `tests/demoIds.test.ts` `expectedConstantNames` array both now include the 4 new ids, so the existing "UUID v4 + uniqueness + demo-id-or-random-UUID" guards cover them.
+
+- **New test file `tests/propertyTypeExpansion.test.ts`** (7 cases, filename matches the AC exactly):
+  - `it.each` over the 4 new types: PUT `/api/properties/:id` with `{ type }` body returns 200 and forwards `type` to `propertyService.updateProperty` (each of the 4 variants as a separate case).
+  - 400 VALIDATION_ERROR when PUT body contains `type: 'TREE_HOUSE'` — Zod short-circuits before `updateProperty` is called.
+  - Zod `updatePropertySchema.parse({ type })` succeeds for each new value directly (bypasses HTTP layer).
+  - `prisma/demoData.ts` exports at least one property per new type.
+  - Each seeded new-type property has a strict UUID-v4 id and a non-empty `landlordId`.
+
+### AC mapping
+
+- "Add `KITNET, PENTHOUSE, LAND, COMMERCIAL` to Prisma `enum PropertyType`" → **satisfied by LL-019** at `prisma/schema.prisma:45-54` (all 8 values present).
+- "Hand-author migration using `ALTER TYPE ... ADD VALUE ...` (one per new variant); `ALTER TYPE ADD VALUE` cannot run inside a transaction block" → **satisfied by LL-019** at `prisma/migrations/20260508040000_add_property_type_extended_values/migration.sql` — 4 ALTER TYPE ADD VALUE statements with NO BEGIN/COMMIT wrapper. Locked by `tests/propertyTypeExtended.test.ts:111-132` which reads the migration file and asserts exact clauses + absence of DROP/CREATE.
+- "Update Zod/Joi/class-validator schema for `POST /api/properties` and `PUT /api/properties/:id` to accept the new values" → **POST satisfied by LL-019** (createPropertySchema already uses `z.nativeEnum(PropertyType).optional()`). **PUT closed by this story** — new `type: z.nativeEnum(PropertyType).optional()` field in updatePropertySchema.
+- "Update validation for `GET /api/properties/search?type=` to accept the new values" → **satisfied by LL-020** via `z.nativeEnum(PropertyType)` in `src/utils/searchValidation.ts`.
+- "Update prisma/seed.ts — add at least 1 seed property for each new type" → **closed by this story** — 4 new properties in demoData.ts (consumed by `prisma.property.createMany({ data: demoProperties })` in `prisma/seed.ts:43`).
+- "tests/propertyTypeExpansion.test.ts covers: POST with each new type succeeds, PUT with each new type succeeds, search filter by each new type returns seeded row" → **satisfied across 3 files**: POST + migration via `tests/propertyTypeExtended.test.ts` (4 cases — Zod parse of createPropertySchema for each new value, migration-SQL assertion, Prisma round-trip, enum export shape), PUT via new `tests/propertyTypeExpansion.test.ts` (7 cases), search via `tests/propertySearchExtendedTypes.test.ts` (10 cases — each new type filter returns matching seeded row via the where.type clause). AC's literal test filename `propertyTypeExpansion.test.ts` is now on disk, so no renaming debate.
+- "Typecheck passes" → **verified**: `npx tsc --noEmit` clean (no output).
+- "Tests pass" → **verified**: full suite **23 failed / 688 passed / 74 files**. Same 6 pre-existing failing files (auth/rag/ingest/userSync/visitValidation). +16 new passing tests vs US-014 baseline of 672. Zero regression.
+
+### Files changed
+
+- `src/utils/propertyValidation.ts` — add `type` field to `updatePropertySchema`.
+- `prisma/demoIds.ts` — 4 new UUID-v4 constants for the new-type demo properties.
+- `prisma/demoData.ts` — 4 new Property records in `demoProperties` (one per new type), plus import of the new id constants.
+- `tests/seed.test.ts` — import + include new ids in `DEMO_PROPERTY_IDS` set.
+- `tests/demoIds.test.ts` — include new id names in `expectedConstantNames` array.
+- `tests/propertyTypeExpansion.test.ts` — new file (7 cases: PUT forwarding for each new type, 400 on unknown, Zod direct parse, demo-seed coverage assertions).
+- `scripts/ralph/prd.json` — flip US-015 `passes: true` with rationale.
+- `scripts/ralph/progress.txt` — this entry.
+
+### Learnings for future iterations
+
+- **`updatePropertySchema` was missing `type` entirely, not just the new values.** The AC wording "Update schema to accept the new values" was easy to misread as "the old values already work, just widen the enum". In fact no PUT caller has ever been able to change a property's type — LL-019 only updated the create path + search path, because `z.nativeEnum(PropertyType)` auto-propagates to any `createPropertySchema` + `propertySearchSchema` usage, but `updatePropertySchema` didn't have a `type` field at all. When widening an enum, always verify EVERY schema that should accept the new values individually — `grep -n "nativeEnum(PropertyType)" src/utils/` tells you which ones already flow automatically and which ones need a hand-added field.
+
+- **Adding new demo properties is strictly safer than mutating existing ones.** Changing `DEMO_PROPERTY_RJ_4_ID`'s type from `APARTMENT` to `PENTHOUSE` (the property IS semantically a cobertura) would be semantically correct, but downstream tests/seeds may grep or inspect demo property types by id — the mutation would be a silent behavioral change on every existing fixture consumer. Adding 4 new ids with new types (`DEMO_PROPERTY_KITNET_ID` etc.) is purely additive: existing tests continue to see the same 5 demos they always did, plus the 4 new ones are available to any future test that wants them.
+
+- **Keep id registries in sync across 3 files.** When adding a new demo property id: (1) declare it in `prisma/demoIds.ts`; (2) consume it in `prisma/demoData.ts` for the actual property record; (3) add it to `tests/seed.test.ts DEMO_PROPERTY_IDS` AND `tests/demoIds.test.ts expectedConstantNames` so the "ids are valid UUID-v4 and demo-or-random" guards cover them. Forgetting step 3 gives you a green seed.test.ts (because `idIsDemo || idMatchesV4` falls through to the regex branch when the id isn't in the set) but a red demoIds.test.ts (which iterates every exported constant and expects it to be in the allowlist). Two different failure modes, one per test — the pair is the regression tripwire.
+
+- **`z.nativeEnum(PrismaEnum)` is the "automatically accept every value" escape hatch.** When a future rollout widens a Prisma enum (e.g., a new `VisitStatus.RESCHEDULED`), Zod schemas using `z.nativeEnum(VisitStatus)` will auto-accept the new value on the next `prisma generate` — no schema edit needed. Schemas using hand-rolled `z.enum(['SCHEDULED', 'CANCELLED', 'COMPLETED', 'NO_SHOW'])` allowlists will NOT — they'll reject the new value with `VALIDATION_ERROR`. Audit with `grep -rn "z.enum(\[" src/utils/` when proposing any enum widening. Project convention is `z.nativeEnum`; any hand-rolled allowlist is technical debt that should be migrated to nativeEnum opportunistically.
+
+- **`ALTER TYPE ADD VALUE` cannot run inside a transaction block.** The AC called this out explicitly, and LL-019's migration respects it. If you ever see `BEGIN;` / `COMMIT;` wrapping an ALTER TYPE ADD VALUE, Postgres will reject the migration with `ALTER TYPE ... ADD cannot run inside a transaction block`. Prisma's migrate runner runs each migration.sql inside a single implicit transaction by default, so hand-authored enum widening migrations must contain ONLY the ALTER TYPE statements (one per line) — no other DDL, no BEGIN/COMMIT, no DML. If you need to backfill data after an enum widening, put that UPDATE in a separate follow-up migration file.
+
+---
+
+## Codebase Pattern updates (US-015)
+
+Appending to the `## Codebase Patterns` section at the top of this file:
+
+- **`z.nativeEnum(PrismaEnum)` is the project-wide convention for enum validation** — used by `createPropertySchema.type`, `propertySearchSchema.type`, `updatePropertySchema.type` (new in US-015), `createContractSchema.documentStatus`, `createVisitSchema.source`, etc. When adding a new Zod schema that touches a Prisma enum, use `z.nativeEnum(TheEnum)` — it auto-tracks any future `ALTER TYPE ADD VALUE` widening via `prisma generate`. A hand-rolled `z.enum([...allowlist])` is a regression tripwire waiting to happen: the next time the enum is widened, that allowlist will silently reject the new value and the AC "new value works end-to-end" test will fail without any obvious clue. Audit periodically with `grep -rn "z.enum(\[" src/utils/`.
+
+- **Enum widening migration constraints**: `ALTER TYPE ADD VALUE` CANNOT run inside a transaction block (Postgres rejects with `ALTER TYPE ... ADD cannot run inside a transaction block`). Prisma's migrate runner wraps each migration.sql in an implicit transaction, so enum-widening migrations must contain ONLY the ALTER TYPE statements — no BEGIN/COMMIT, no other DDL, no DML backfills. If you need to backfill rows against the new value (e.g., UPDATE ... SET status = 'NEW_VALUE' WHERE ...), that must be a SEPARATE follow-up migration file after Postgres has committed the enum-value addition. Pattern lives in `prisma/migrations/20260508040000_add_property_type_extended_values/migration.sql`.
+
+- **Add new demo ids rather than mutating existing ones.** Changing an existing demo property's type/status/etc. is a silent behavioral change for every test that grep-inspects the fixture by id. The safe alternative is to add new ids (`DEMO_PROPERTY_KITNET_ID` etc.) — purely additive, existing tests continue to see the same fixtures they always did. When doing this: (1) declare in `prisma/demoIds.ts`, (2) consume in `prisma/demoData.ts`, (3) add to `tests/seed.test.ts DEMO_PROPERTY_IDS` AND `tests/demoIds.test.ts expectedConstantNames` (both — they test different guards).
+
+- **Verify Zod schema coverage when widening an enum.** `z.nativeEnum(PropertyType)` auto-propagates the new values to every schema that uses the wrapper — but only if the schema actually has a field for that enum. `updatePropertySchema` did not have a `type` field at all before US-015, so widening the PropertyType enum in LL-019 didn't help the PUT path. When adding a new value to a Prisma enum, `grep -l "nativeEnum(TheEnum)" src/utils/` tells you which schemas auto-pick it up, but the real check is "which endpoints should accept this field?" — audit the routes, not just the schemas.
+
+---
