@@ -990,3 +990,54 @@ Appending to the `## Codebase Patterns` section at the top of this file:
 - **Verify Zod schema coverage when widening an enum.** `z.nativeEnum(PropertyType)` auto-propagates the new values to every schema that uses the wrapper — but only if the schema actually has a field for that enum. `updatePropertySchema` did not have a `type` field at all before US-015, so widening the PropertyType enum in LL-019 didn't help the PUT path. When adding a new value to a Prisma enum, `grep -l "nativeEnum(TheEnum)" src/utils/` tells you which schemas auto-pick it up, but the real check is "which endpoints should accept this field?" — audit the routes, not just the schemas.
 
 ---
+
+## 2026-05-07 - US-016 (Property.hasWifi + hasPool amenities)
+
+### Closed 2 remaining AC items (most of the feature was pre-built by LL-021/LL-022)
+
+- Schema field `hasWifi Boolean @default(false) @map("has_wifi")` and `hasPool Boolean @default(false) @map("has_pool")` on Property — already at prisma/schema.prisma:194-195 (LL-021).
+- Hand-authored migration `prisma/migrations/20260508050000_add_property_amenities/migration.sql` — already present (LL-021).
+- POST /api/properties + PUT /api/properties/:id accept both flags via `multipartBoolean.optional()` in createPropertySchema (propertyValidation.ts:50-51) + updatePropertySchema (:75-76) — already wired (LL-022).
+- GET /api/properties/search accepts `?hasWifi=true&hasPool=true` via `stringToBoolean` in propertySearchSchema (searchValidation.ts:37-38) — already wired (LL-022).
+- GET /api/properties/:id returns full Property row including both amenity flags — propertyService.getPropertyById uses findUnique with no narrow `select:`, so new columns land automatically.
+- Existing test coverage: propertyAmenitiesColumns.test.ts (4 DB round-trip cases) + propertyAmenitiesFlow.test.ts (10 HTTP flow cases including search AND-composition).
+
+### What this story actually changed
+
+1. **prisma/demoData.ts** — added explicit `hasWifi`/`hasPool` to all 9 demo properties. Distribution:
+   - `SP_1` Apt Paulista moderno: wifi=true, pool=false
+   - `RJ_1` Casa Leblon: wifi=true, pool=false
+   - `RJ_2` Apt Copacabana vista mar: wifi=true, pool=true
+   - `RJ_3` Studio Botafogo: wifi=true, pool=false
+   - `RJ_4` Cobertura Ipanema ("piscina privativa"): wifi=true, pool=true
+   - `KITNET` Tijuca: wifi=true, pool=false
+   - `PENTHOUSE` Leblon ("piscina infinita"): wifi=true, pool=true
+   - `LAND` Barra terreno: wifi=false, pool=false (no building → no amenity)
+   - `COMMERCIAL` Centro sala: wifi=true, pool=false
+   - Totals: wifi true×8 / false×1, pool true×3 / false×6 — realistic cross-product so `?hasWifi=true` returns 8, `?hasPool=true` returns 3, `?hasWifi=true&hasPool=true` returns 3.
+
+2. **tests/propertyAmenities.test.ts** (new, AC-named) — 9 cases that fill the two AC gaps:
+   - 3 for GET /api/properties/:id (mockGetPropertyById + mocked propertyViewService/profileViewService to avoid fire-and-forget DB side-effects): both-true body, both-false body, mixed wifi-only.
+   - 6 for demoData seed assertions: every property declares both boolean flags, at least one row for each of {wifi=true, wifi=false, pool=true, pool=false, wifi=true&&pool=true}.
+
+### Files changed
+
+- `prisma/demoData.ts` — added hasWifi/hasPool to 9 property seed objects (27 lines touched net).
+- `tests/propertyAmenities.test.ts` — new file, 160 lines.
+- `scripts/ralph/prd.json` — US-016 passes=true + notes.
+- `scripts/ralph/progress.txt` — this entry.
+
+### Quality gates
+
+- `npx tsc --noEmit` — clean.
+- Targeted: `npx vitest run tests/propertyAmenities.test.ts tests/propertyAmenitiesFlow.test.ts tests/propertyAmenitiesColumns.test.ts tests/seed.test.ts tests/demoIds.test.ts` → **65/65 pass**.
+- Full suite: **23 failed / 697 passed / 75 files** (+9 passing vs US-015 baseline of 688). Same 6 pre-existing failing files (auth/rag/ingest/userSync/visitValidation). Zero regression.
+
+### Learnings for future iterations
+
+- **Check if POST validation is newer than PUT validation.** This pattern showed up in US-015 (`updatePropertySchema` didn't have `type` at all when the enum widened) and US-016 (the validation + search wiring was already complete — only GET + seed were gaps). Before writing code for a "POST/PUT/GET accept X" AC, `grep -n "X" src/utils/propertyValidation.ts src/utils/searchValidation.ts src/services/propertyService.ts` and list exactly which surfaces still need work. Often 5 of 7 AC items are pre-built and only 1-2 are genuinely missing.
+- **Mock fire-and-forget side-effects when testing GET routes.** `propertyController.getById` at propertyController.ts:120-128 calls `profileViewService.record` (if `?inspectLandlord=true`) and `propertyViewService.record` unconditionally — both are `void`-awaited ("fire and forget"). A plain mock of `getPropertyById` alone will make the DB-hitting services throw when the test mock doesn't stub them. Always add `vi.mock('../src/services/propertyViewService', () => ({ propertyViewService: { record: vi.fn() } }))` + the same for profileViewService to keep the GET test hermetic.
+- **Seed-distribution assertions work better than "at least N rows match".** For search filter demos, assert the POSITIVE presence of each AND-combination (wifi=true, pool=true, wifi=true&&pool=true, etc.) — that makes the test a contract that the seed will always supply meaningful search demos. A single "at least 1 wifi=true" assertion would pass even if every seed flipped to true and the pool filter became a trivial identity. The 6 positive-combo assertions in propertyAmenities.test.ts lock a realistic distribution without pinning exact counts (exact counts would break every time a new demo property is added).
+- **`multipartBoolean` + `stringToBoolean` are two different coercion primitives** in this repo. `multipartBoolean` (in `src/utils/propertyValidation.ts`) is used in POST/PUT bodies where multipart form-data sends everything as strings. `stringToBoolean` (in `src/utils/searchValidation.ts`) is used in query string parsing. They both accept `'true'`/`'false'` and reject garbage like `'yep'` with VALIDATION_ERROR. When adding a new boolean field to a Property endpoint, use the right primitive for the layer — don't copy from the wrong file.
+
+---
