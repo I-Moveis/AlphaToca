@@ -99,6 +99,17 @@ enum NotificationType {
   BROADCAST
 }
 
+// US-013: cross-device notification history category. Distinct from
+// NotificationType (which is the FCM-dispatch taxonomy — VISIT_*, DOCUMENT_*,
+// BROADCAST, etc.). NotificationCategory is the coarser bucket the client uses
+// to colour-code/group the /notifications screen: `update` = app updates,
+// `announcement` = admin broadcasts, `system` = internal system events.
+enum NotificationCategory {
+  update
+  announcement
+  system
+}
+
 enum ProposalStatus {
   PENDING
   ACCEPTED
@@ -366,18 +377,20 @@ model Visit {
 }
 
 model Notification {
-  id     String           @id @default(uuid())
-  userId String           @map("user_id")
-  type   NotificationType
-  title  String
-  body   String
-  data   Json? // Payload extra (visitId, propertyId, etc.)
-  readAt DateTime?        @map("read_at") // null = não lida
-  sentAt DateTime         @default(now()) @map("sent_at")
+  id         String               @id @default(uuid())
+  userId     String               @map("user_id")
+  type       NotificationType
+  category   NotificationCategory @default(announcement)
+  title      String
+  body       String
+  data       Json? // Payload extra (visitId, propertyId, etc.)
+  readAt     DateTime?            @map("read_at") // null = não lida
+  receivedAt DateTime             @default(now()) @map("received_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt], name: "notifications_user_read_idx")
+  @@index([userId, receivedAt], name: "notifications_user_received_at_idx")
   @@map("notifications")
 }
 
@@ -594,11 +607,12 @@ model SupportTicket {
 // o mecanismo anti-race. Mensagens vivem em outra tabela (fora do escopo deste PRD);
 // a API documenta `messages: []` como placeholder.
 model Conversation {
-  id         String   @id @default(uuid())
-  propertyId String   @map("property_id")
-  landlordId String   @map("landlord_id")
-  tenantId   String   @map("tenant_id")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id            String    @id @default(uuid())
+  propertyId    String    @map("property_id")
+  landlordId    String    @map("landlord_id")
+  tenantId      String    @map("tenant_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastMessageAt DateTime? @map("last_message_at")
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   landlord User     @relation("LandlordConversations", fields: [landlordId], references: [id], onDelete: Cascade)

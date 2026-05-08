@@ -134,6 +134,7 @@ export const conversationService = {
         landlordId: true,
         tenantId: true,
         createdAt: true,
+        lastMessageAt: true,
         landlord: {
           select: {
             id: true,
@@ -181,7 +182,14 @@ export const conversationService = {
       const isUserLandlord = row.landlordId === userId;
       const counterpart = isUserLandlord ? row.tenant : row.landlord;
       const lastMsg = row.messages[0] ?? null;
-      const lastMessageAt = (lastMsg?.createdAt ?? row.createdAt).toISOString();
+      // US-006: prefer the authoritative lastMessageAt column (updated in the
+      // createMessage transaction). Fall back to the included messages relation
+      // for conversations predating the column backfill (rare now that the
+      // migration populated existing rows), and finally to createdAt for
+      // empty threads.
+      const lastMessageAt = (
+        row.lastMessageAt ?? lastMsg?.createdAt ?? row.createdAt
+      ).toISOString();
       return {
         id: row.id,
         counterpartName: counterpart.name,
@@ -328,8 +336,8 @@ export const conversationService = {
   },
 
   /**
-   * LL-013 — Persiste uma mensagem nova na thread. Assume que o caller já
-   * passou pelo guard do controller (existe a conversa + o caller é
+   * LL-013 / US-006 — Persiste uma mensagem nova na thread. Assume que o caller
+   * já passou pelo guard do controller (existe a conversa + o caller é
    * participante); este método NÃO re-valida autorização para evitar um
    * segundo round-trip ao banco.
    *
@@ -337,25 +345,42 @@ export const conversationService = {
    * o que permite reuso direto pelo socket emitter (LL-014) sem reshaping.
    * `readAt` sempre começa `null` numa mensagem recém-enviada: o próprio autor
    * não conta como leitor.
+   *
+   * US-006: o INSERT da mensagem e o UPDATE de `Conversation.lastMessageAt`
+   * correm na mesma transação (`$transaction` com callback interativo). Assim
+   * o ordering DESC por `lastMessageAt` usado pela inbox (GET /api/conversations)
+   * nunca observa uma mensagem persistida com a thread "antiga" — um crash
+   * entre os dois comandos desfaria o INSERT. `lastMessageAt` recebe
+   * literalmente `message.createdAt` (não `new Date()`) para garantir que os
+   * dois valores sejam byte-idênticos, o que facilita o debugging de ordenação.
    */
   async createMessage(
     conversationId: string,
     authorId: string,
     content: string,
   ): Promise<ConversationMessageView> {
-    const row = await prisma.conversationMessage.create({
-      data: {
-        conversationId,
-        authorId,
-        content,
-      },
-      select: {
-        id: true,
-        authorId: true,
-        content: true,
-        createdAt: true,
-        readAt: true,
-      },
+    const row = await prisma.$transaction(async (tx) => {
+      const message = await tx.conversationMessage.create({
+        data: {
+          conversationId,
+          authorId,
+          content,
+        },
+        select: {
+          id: true,
+          authorId: true,
+          content: true,
+          createdAt: true,
+          readAt: true,
+        },
+      });
+
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: message.createdAt },
+      });
+
+      return message;
     });
 
     return {

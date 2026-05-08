@@ -33,7 +33,9 @@ describe('rentalPaymentService.listByTenant() — LL-009', () => {
     expect(result).toEqual([]);
     expect(mockContractFindMany).toHaveBeenCalledWith({
       where: { propertyId: PROPERTY_ID, tenantId: TENANT_ID },
-      select: { startDate: true, endDate: true },
+      // US-007: `monthlyRent` is now selected so missing-month synthesis can
+      // use it as the amount for LATE/AWAITING rows.
+      select: { startDate: true, endDate: true, monthlyRent: true },
     });
     expect(mockRentalFindMany).not.toHaveBeenCalled();
   });

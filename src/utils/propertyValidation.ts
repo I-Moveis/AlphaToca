@@ -71,6 +71,7 @@ export const updatePropertySchema = z.object({
   city: z.string().optional(),
   state: z.string().length(2).toUpperCase().optional(),
   zipCode: z.string().optional(),
+  type: z.nativeEnum(PropertyType).optional(),
   hasWifi: multipartBoolean.optional(),
   hasPool: multipartBoolean.optional(),
   photosToRemove: photosToRemoveField,

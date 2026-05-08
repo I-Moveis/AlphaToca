@@ -161,51 +161,80 @@ export const rentalPaymentService = {
   },
 
   /**
-   * LL-009: histórico multi-mês de pagamentos para a dupla (propertyId, tenantId).
+   * US-007 / LL-009: histórico multi-mês de pagamentos para a dupla
+   * (propertyId, tenantId).
    *
    * Busca TODOS os contratos entre esse inquilino e esse imóvel (independente
    * de `ContractStatus`, porque TERMINATED/COMPLETED ainda delimitam uma janela
-   * legítima de tenure que o landlord quer ver) e extrai os meses YYYY-MM que
-   * caem dentro de `startDate..endDate` — inclusivo em ambos. Só os
-   * `RentalPayment` desses meses entram no resultado; pagamentos fora da
-   * tenure do inquilino (ex.: mês registrado durante o ciclo do inquilino
-   * anterior) são excluídos.
+   * legítima de tenure que o landlord quer ver) e enumera os meses YYYY-MM
+   * que caem entre `startDate` e `min(endDate, currentMonth)` — inclusivo em
+   * ambos, com o teto da "mês corrente" evitando renderizar linhas para
+   * meses futuros de contratos ACTIVE longos.
    *
-   * Ordem: `period DESC` (mais recente primeiro, como o UI da "histórico de
-   * pagamentos" espera).
+   * Para cada mês enumerado:
+   *   - se existe um `RentalPayment` para (propertyId, period), usamos o
+   *     status/amount/paidAt da linha (paidAt = updatedAt só quando
+   *     status=PAID; caso contrário null).
+   *   - se NÃO existe linha, sintetizamos uma entrada com:
+   *         amount = contract.monthlyRent (Number — desserialização Decimal)
+   *         status = LATE   (se period < currentPeriod — mês já passou)
+   *                  AWAITING (se period === currentPeriod — mês corrente)
+   *         paidAt = null
+   *     A síntese garante que o UI de "histórico" sempre tem uma linha por
+   *     mês de tenure, mesmo que o landlord nunca tenha feito upsert em
+   *     PUT /payments/current para aquele mês.
    *
-   * Retorno vazio quando não há nenhum contrato entre os dois ou quando nenhum
-   * `RentalPayment` casa com os meses da tenure — ambos são respostas 200 `[]`,
+   * Ordem: `period DESC` (mais recente primeiro, como o UI espera).
+   *
+   * Retorno vazio quando não há nenhum contrato entre os dois — 200 `[]`,
    * nunca 404.
+   *
+   * O parâmetro `now` é injetável para facilitar testes determinísticos; em
+   * produção recebe `new Date()` no default.
    */
   async listByTenant(
     propertyId: string,
     tenantId: string,
+    now: Date = new Date(),
   ): Promise<RentalPaymentHistoryItem[]> {
     const contracts = await prisma.contract.findMany({
       where: { propertyId, tenantId },
-      select: { startDate: true, endDate: true },
+      select: { startDate: true, endDate: true, monthlyRent: true },
     });
 
     if (contracts.length === 0) {
       return [];
     }
 
-    const validPeriods = new Set<string>();
+    const currentPeriodStr = currentPeriod(now);
+    // Primeiro dia do mês corrente em UTC — usado para capar a enumeração
+    // quando o contrato ainda está ACTIVE e endDate aponta para o futuro.
+    const currentMonthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+
+    // Mapa period → monthlyRent do contrato que cobre aquele mês. Em caso de
+    // overlap (raríssimo, mas possível com contratos duplicados), o último
+    // contrato iterado prevalece — dado determinístico e irrelevante para o
+    // resultado porque o valor vem quase sempre do mesmo contrato.
+    const periodToRent = new Map<string, number>();
     for (const c of contracts) {
-      for (const period of enumerateMonthsUtcInclusive(c.startDate, c.endDate)) {
-        validPeriods.add(period);
+      const effectiveEnd =
+        c.endDate < currentMonthStart ? c.endDate : currentMonthStart;
+      const rent = Number(c.monthlyRent);
+      for (const period of enumerateMonthsUtcInclusive(c.startDate, effectiveEnd)) {
+        periodToRent.set(period, rent);
       }
     }
 
-    if (validPeriods.size === 0) {
+    if (periodToRent.size === 0) {
       return [];
     }
 
     const rows = await prisma.rentalPayment.findMany({
       where: {
         propertyId,
-        period: { in: Array.from(validPeriods) },
+        period: { in: Array.from(periodToRent.keys()) },
       },
       select: {
         period: true,
@@ -216,12 +245,39 @@ export const rentalPaymentService = {
       orderBy: { period: 'desc' },
     });
 
-    return rows.map((row) => ({
-      period: row.period,
-      amount: row.amount === null ? 0 : Number(row.amount),
-      status: row.status,
-      paidAt:
-        row.status === RentalPaymentStatus.PAID ? row.updatedAt.toISOString() : null,
-    }));
+    const rowByPeriod = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      rowByPeriod.set(r.period, r);
+    }
+
+    const items: RentalPaymentHistoryItem[] = [];
+    for (const [period, rent] of periodToRent) {
+      const row = rowByPeriod.get(period);
+      if (row) {
+        items.push({
+          period,
+          amount: row.amount === null ? 0 : Number(row.amount),
+          status: row.status,
+          paidAt:
+            row.status === RentalPaymentStatus.PAID
+              ? row.updatedAt.toISOString()
+              : null,
+        });
+      } else {
+        const syntheticStatus =
+          period < currentPeriodStr
+            ? RentalPaymentStatus.LATE
+            : RentalPaymentStatus.AWAITING;
+        items.push({
+          period,
+          amount: rent,
+          status: syntheticStatus,
+          paidAt: null,
+        });
+      }
+    }
+
+    items.sort((a, b) => b.period.localeCompare(a.period));
+    return items;
   },
 };

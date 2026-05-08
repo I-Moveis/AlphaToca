@@ -95,6 +95,7 @@ export const adminController = {
         message: 'Broadcast enviado com sucesso.',
         sent: result.sent,
         failed: result.failed,
+        persisted: result.persisted,
       });
     } catch (error) {
       next(error);
