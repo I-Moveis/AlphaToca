@@ -25,6 +25,11 @@ Started: Sat May  9 03:38:23 AM -03 2026
 - Supabase-only Postgres extensions to expect in any production dump (NOT shipped with `postgresql-contrib-16`, so `CREATE EXTENSION` will fail and the application schema does NOT depend on them): `pg_graphql`, `pgjwt`, `vault`/`supabase_vault`, `pgsodium`, `pg_net`, `pgaudit`, `wrappers`. Any future script that touches extensions should warn-and-continue on these rather than abort.
 - `pg_restore --list` extension lines are formatted `<id>; <oid> <oid> EXTENSION - <name>` — the extension name is the LAST whitespace-delimited field. There is also an `EXTENSION COMMENT` line for each that must be filtered out (`grep -v 'EXTENSION COMMENT'`) to avoid double-creating.
 - For dynamic per-table `count(*)` from a label list, the cleanest single-statement pattern is a PL/pgSQL `DO` block iterating a `(VALUES …)` rowset, with `to_regclass('public.' || quote_ident(tbl))` to skip missing tables and `EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO cnt`. Output via `RAISE NOTICE` lands on stderr (psql shows it) and stays as a single SQL command per the AC.
+- URL-encoding a password for a Postgres connection string from bash uses python3's stdlib (no node, no jq dependency): `python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$PASSWORD"`. Pass `safe=""` so `/` and `@` are escaped — they're legal in passwords but break URL parsing. Encoded output never contains `|`, so `sed` can use `|` as the delimiter and skip escaping `/` in the URL itself.
+- For `sed -i` on a connection-string substitution, the URL contains `/` so the conventional `s/…/…/` delimiter forces escaping. Use a `'|'` delimiter (`s|…|…|`) — the URL-encoded password from `urllib.parse.quote(safe="")` cannot produce `|`, so the delimiter is collision-safe. Pattern used in 04-cutover-env.sh.
+- `.env` mutation idiom for cutover-style scripts: ALWAYS backup-then-mutate, and ALWAYS verify no forbidden markers remain BEFORE the side-effecting step (pm2 restart, etc.). The 04-cutover-env.sh sequence is: cp → sed → grep-verify-fail-fast → pm2 restart. Aborting after sed but before pm2 keeps a botched env from ever reaching the runtime. Backup name convention: `<file>.pre-supabase-cutover.bak`, refused if it already exists (no silent overwrite).
+- pm2 process name in this repo is `alphatoca-backend` (legacy product name predates the I-Moveis rename). Confirmed via `plan_hospedagem.md:65` (`pm2 start dist/app.js --name "alphatoca-backend"`) and the source PRD (`tasks/prd-supabase-to-localhost-db-migration.md`). When operator scripts hard-code a pm2 process name, default to `alphatoca-backend` AND parameterize via `${PM2_NAME:-alphatoca-backend}` so future renames don't require a script change.
+- Operator-script tty detection idiom: `if [[ ! -t 0 ]]; then fail "stdin is not a tty"; fi` before `read -s`. Without this, a CI/automation re-run with no input silently blocks. The pattern is used in 04-cutover-env.sh's password prompt when `$2` is omitted.
 
 ---
 
@@ -104,4 +109,34 @@ Started: Sat May  9 03:38:23 AM -03 2026
   - `pg_restore` exits non-zero on warnings (e.g., missing Supabase-only extensions) even when the schema/data restore is otherwise complete. Under `set -euo pipefail`, this aborts the script. Workaround: bracket the call with `set +e` / `set -e` and capture `$?` for an informational log. Same pattern is used for the per-extension `CREATE EXTENSION` loop.
   - PL/pgSQL `DO $$ … $$` blocks are the cleanest way to satisfy a "single SQL query" AC when the query needs control flow (skip-if-missing-table, dynamic table names). `RAISE NOTICE` writes to stderr via psql; the output IS visible to the operator. Use `EXECUTE format('… %I', tbl)` for safe identifier quoting and `to_regclass('public.' || quote_ident(tbl))` to test table existence cheaply.
   - The script intentionally does NOT call `npx prisma migrate status` itself — the AC mandates printing the command for the operator. Reason: the operator runs this script from a directory next to the dump file (e.g., `/var/backups/`), but the API project root with `node_modules/.bin/prisma` and `prisma/schema.prisma` is a separate path on the host. Hard-coding `cd /opt/imoveis-backend` would couple the script to one host layout.
+---
+
+## 2026-05-09 - US-005
+- Authored `scripts/db-migration/04-cutover-env.sh` — swaps the production .env from Supabase URLs to the local Postgres URL and restarts the API via PM2.
+- Files changed:
+  - `scripts/db-migration/04-cutover-env.sh` (new, +x) — Steps:
+    0. Args: `$1` = .env path (default `./.env`), `$2` = new password (or interactive `read -s` prompt, with a tty-check that fails fast if stdin is not a terminal). Pre-flight verifies env file exists + `pm2` + `python3` are on PATH.
+    1. Backup: `cp -p ENV_FILE → ENV_FILE.pre-supabase-cutover.bak`; aborts if backup already exists (no silent overwrite per AC).
+    2. URL-encode password: `python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))'`.
+    3. `sed -i.tmp -E "s|^DATABASE_URL=.*$|DATABASE_URL=postgresql://imoveis:<encoded>@127.0.0.1:5432/imoveis?schema=public|"` (then `rm .tmp`); appends a line if missing rather than silently no-op'ing.
+    4. Same substitution for `DIRECT_URL`.
+    5. `sed -i -E '/^[[:space:]]*SUPABASE_ACCESS_TOKEN=/d'` to strip the legacy token.
+    6. Verifier: greps for `aws-1-us-west-2.pooler.supabase.com`, `qkmseleljscluhhrcpaz`, `^SUPABASE_ACCESS_TOKEN=`; aborts with the backup path called out BEFORE pm2 restart so a botched env never reaches the runtime.
+    7. `pm2 restart "${PM2_NAME:-alphatoca-backend}" --update-env`.
+    8. `pm2 logs ... --lines 50 --nostream` (warn-not-fail on non-zero).
+    9. Final message points the operator at `05-smoke-test.sh`.
+  - `scripts/ralph/prd.json` — flipped US-005 `passes` to `true`, added implementation notes.
+- Acceptance verification:
+  - `bash -n scripts/db-migration/04-cutover-env.sh` → exits 0.
+  - `chmod +x` confirmed (`-rwxr-xr-x`).
+  - End-to-end sed/url-encoding logic exercised in /tmp against a synthetic .env containing `DATABASE_URL`, `DIRECT_URL`, and `SUPABASE_ACCESS_TOKEN` lines with the real Supabase host/project ID. Result: post-script .env contains the new `127.0.0.1:5432/imoveis` URLs with `p@ss/word with+special&chars` correctly encoded as `p%40ss%2Fword%20with%2Bspecial%26chars`, and the leftover-marker grep returns zero hits.
+  - All 11 AC items mapped: shebang+pipefail (24), `$1`=path with `./.env` default (28), `$2`=password with `read -s` fallback (29, 75-87), `cp -p` backup (90-94) + refusal-on-existing (91-93), DATABASE_URL substitution (97-105), DIRECT_URL substitution (108-116), SUPABASE_ACCESS_TOKEN strip (119-121), 3-marker verifier with non-zero exit (124-141), `pm2 restart $PM2_NAME --update-env` (144-145), `pm2 logs $PM2_NAME --lines 50 --nostream` (148-149), final hand-off to 05-smoke-test.sh (152-159).
+  - `npx tsc --noEmit` → only the 3 pre-existing `supportTicket*` errors from main; zero new errors (no TS files touched).
+- **Learnings for future iterations:**
+  - `read -s` blocks indefinitely with no input when run from CI / non-interactive contexts. Always gate it with `[[ -t 0 ]]` and fail fast otherwise. Same pattern should be reused in any future script that wants an interactive password fallback.
+  - `urllib.parse.quote` defaults to `safe='/'` — for passwords going into a connection string, you MUST pass `safe=""` so `/`, `@`, `:` are all percent-encoded. Otherwise a password containing `/` will silently corrupt the URL parser's view of the path component.
+  - The pm2 process is named `alphatoca-backend`, not `imoveis-backend`. The product was renamed in flight but the runtime process keeps its original tag. Confirmed via `plan_hospedagem.md:65` and the source PRD; `${PM2_NAME:-alphatoca-backend}` is the parameterized default that survives a future rename.
+  - Choose a sed delimiter that the substitution payload cannot contain. `urllib.parse.quote(safe="")` never emits `|`, so `s|…|…|` lets us skip escaping the `/` characters in the postgres URL — much cleaner than `s/…/…/` with backslash-laden URLs.
+  - The verifier (Step 5) MUST run before pm2 restart. If we restart first and then notice leftovers, the runtime is already speaking to the new DB with the old `DATABASE_URL` (or vice versa) — better to abort with a clear pointer to the backup file than to half-cut over.
+  - Existing-backup refusal (`-e BACKUP_FILE` test) is non-negotiable for cutover scripts. Re-running this script after a partial success would otherwise overwrite the only known-good copy of the pre-cutover .env. Document this in any future rollback runbook (US-007).
 ---

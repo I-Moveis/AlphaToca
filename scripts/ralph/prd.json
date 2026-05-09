@@ -104,8 +104,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. scripts/db-migration/04-cutover-env.sh authored, chmod +x. Args: $1=.env path (default ./.env), $2=new local-Postgres password (or read -s prompt when stdin is a tty; aborts cleanly when no tty and arg omitted). PM2_NAME / APP_ROLE / APP_DB / APP_HOST / APP_PORT all parameterizable via env (defaults: alphatoca-backend / imoveis / imoveis / 127.0.0.1 / 5432). Pre-flight: env file exists, pm2 + python3 on PATH. Step 1 — backup: cp -p ENV_FILE → ENV_FILE.pre-supabase-cutover.bak; aborts if backup already exists (no silent overwrite per AC). Password URL-encoded via python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=\"\"))'. Steps 2/3 — sed -i.tmp -E (then rm .tmp) with '|' delimiter to substitute DATABASE_URL / DIRECT_URL; appends the line if missing rather than failing silently. Step 4 — sed -E '/^[[:space:]]*SUPABASE_ACCESS_TOKEN=/d' to strip the line. Step 5 — verifies the resulting .env contains none of {aws-1-us-west-2.pooler.supabase.com, qkmseleljscluhhrcpaz, ^SUPABASE_ACCESS_TOKEN=}; aborts with the backup path called out BEFORE step 6 so a botched env never reaches pm2. Step 6 — pm2 restart \"$PM2_NAME\" --update-env. Step 7 — pm2 logs \"$PM2_NAME\" --lines 50 --nostream (warn-not-fail on non-zero rc). Final message points the operator at 05-smoke-test.sh. `bash -n` exits 0; sed/url-encode logic validated end-to-end against a synthetic .env in /tmp (special chars '@/+& ' → %40%2F%2B%26%20). Typecheck shows only the 3 pre-existing supportTicket* errors that exist on main; zero new errors."
     },
     {
       "id": "US-006",
