@@ -9,6 +9,10 @@ Started: Sat May  9 03:38:23 AM -03 2026
 - Rollback runbook target path is `documentation/runbook-rollback-supabase.md` (US-007). Forward-reference it from any earlier story's docs; the link will resolve once US-007 lands.
 - Operator-facing scripts are written for the production server `desafio01.alphaedtech` (10.10.0.201), not dev machines. Mention this prominently in any new operator doc.
 - Supabase identifiers to embed where relevant: project ID `qkmseleljscluhhrcpaz`, source pooler host `aws-1-us-west-2.pooler.supabase.com`, direct port 5432, pooler port 6543 (incompatible with `pg_dump`).
+- Idempotency idiom for any `scripts/db-migration/` shell script that edits a config file: preserve the pristine original via `cp -p file file.bak` only if `file.bak` does not exist, then `sed -i` without a `.bak` suffix (or with a deleted `.tmp` scratch). Re-runs must never overwrite the pristine backup.
+- Postgres DDL idempotency: `CREATE DATABASE` does NOT support `IF NOT EXISTS`; gate with `SELECT 1 FROM pg_database WHERE datname='…'` first. `CREATE ROLE` should be wrapped in a `DO $$ … IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='…') THEN CREATE ROLE … END IF; END $$;` block.
+- Apt PG paths on Debian/Ubuntu after `postgresql-16` install: configs at `/etc/postgresql/16/main/{postgresql,pg_hba}.conf`, service unit `postgresql`. Don't try to discover paths dynamically; this is the convention every operator script assumes.
+- Modern apt repo signing: keyrings live at `/etc/apt/keyrings/`, source entries use `[signed-by=…]`. Do not use `apt-key add` (deprecated). The 01-provision-postgres.sh PGDG setup follows this pattern — copy it for any future apt-repo additions.
 
 ---
 
@@ -26,4 +30,23 @@ Started: Sat May  9 03:38:23 AM -03 2026
   - The `documentation/` directory exists and contains business/legal markdown — putting the rollback runbook there in US-007 fits the existing convention.
   - `scripts/` already holds operational JS scripts at the root (`apply-migration.js`, `check-db.js`, etc.). Putting cutover scripts in a subdirectory (`scripts/db-migration/`) is the right call — keeps the runbook flow self-contained.
   - The README forward-references future scripts (`01-…sh` through `05-…sh`) and the runbook before they exist. This is per the PRD ("scripts themselves do NOT need to exist yet — this is the table of contents") — links will resolve as US-002 through US-007 land.
+---
+
+## 2026-05-09 - US-002
+- Authored `scripts/db-migration/01-provision-postgres.sh` — native Postgres 16 install + role/db scaffold for production cutover.
+- Files changed:
+  - `scripts/db-migration/01-provision-postgres.sh` (new, +x) — root-required, idempotent: locale-gen guard → conditional PGDG repo (only if distro lacks `postgresql-16`) → apt install postgresql-16/contrib → listen_addresses lock + .bak → full pg_hba.conf rewrite (loopback+scram only, original at .bak) → systemctl restart + is-active assertion → role+db creation via DO blocks and pg_database/pg_roles guards with template0/en_US.UTF-8/UTF8 → openssl rand -base64 32 password printed ONCE between markers → PGPASSWORD `\conninfo` smoke test → final summary line.
+  - `scripts/ralph/prd.json` — flipped US-002 `passes` to `true`, added implementation notes.
+- Acceptance verification:
+  - `bash -n scripts/db-migration/01-provision-postgres.sh` → exits 0.
+  - `chmod +x` confirmed (`-rwxr-xr-x`).
+  - Final summary line literal: `Postgres ready at 127.0.0.1:5432, database 'imoveis', role 'imoveis'`.
+  - Password marker literal: `>>> SAVE THIS PASSWORD INTO .env <<<`.
+  - `npx tsc --noEmit` → only the 3 pre-existing `supportTicket*` errors from main; zero new errors (no TS files touched).
+- **Learnings for future iterations:**
+  - PG conf paths on Debian/Ubuntu live at `/etc/postgresql/${PG_MAJOR}/main/{postgresql,pg_hba}.conf` regardless of where the data dir is. Hard-coding `${PG_CONF_DIR}=/etc/postgresql/${PG_MAJOR}/main` is the standard expectation for `apt`-installed clusters and what every operator runbook on this stack assumes — don't try to discover it dynamically with `pg_lsclusters`.
+  - `CREATE DATABASE` does NOT accept `IF NOT EXISTS`. Idempotency requires a pre-flight `SELECT 1 FROM pg_database WHERE datname=…` check. Same for `CREATE ROLE` — guard via `DO $$ ... IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=…) THEN CREATE ROLE … END IF; END $$;` to survive re-runs.
+  - For postgresql.conf/pg_hba.conf .bak preservation across re-runs, do NOT use `sed -i.bak` (it overwrites .bak with the already-modified file on rerun). Pattern used: `cp -p` to .bak only when .bak does not yet exist, then sed without the suffix (or with a scratch `.tmp` that is immediately deleted). Future scripts (04-cutover-env.sh) should follow the same idiom for `.env.pre-supabase-cutover.bak`.
+  - The PGDG repo setup uses the keyring at `/etc/apt/keyrings/postgresql.gpg` and a `signed-by=` source entry — this is the modern (post-`apt-key`) pattern. Don't regress to `apt-key add`.
+  - Smoke-test caveat: when the role pre-existed (re-run with no fresh password generated), the script cannot test `\conninfo` over TCP without `PGPASSWORD` from the operator. The script warns rather than fails — re-runs after the first successful run should not be blocked by a missing password.
 ---

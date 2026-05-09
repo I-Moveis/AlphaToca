@@ -40,8 +40,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. scripts/db-migration/01-provision-postgres.sh authored, chmod +x. Covers: locale-gen guard for en_US.UTF-8, conditional PGDG repo setup (only when default apt sources lack postgresql-16), apt install of postgresql-16 + postgresql-contrib-16, listen_addresses lock to 'localhost' with .bak backup of postgresql.conf, full rewrite of pg_hba.conf to only `local`/`host 127.0.0.1|::1` with scram-sha-256 (original preserved at .bak), systemctl restart + is-active verification, idempotent role+db creation via DO block + pg_database guard with template0/en_US.UTF-8/UTF8, openssl rand -base64 32 password printed ONCE between '>>> SAVE THIS PASSWORD INTO .env <<<' markers, PGPASSWORD-driven \\conninfo smoke test, final summary line. `bash -n` passes. Typecheck shows only the 3 pre-existing supportTicket errors that already exist on main."
     },
     {
       "id": "US-003",
