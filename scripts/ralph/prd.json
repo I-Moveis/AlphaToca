@@ -81,8 +81,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. scripts/db-migration/03-restore-local.sh authored, chmod +x. Args: dump file path as $1 with usage message; LOCAL_DATABASE_URL defaults to postgresql://imoveis@127.0.0.1:5432/imoveis (password via PGPASSWORD env, with a clear warn-not-fail when unset). Step 1 — extension discovery via `pg_restore --list <dump> | grep -i 'EXTENSION ' | grep -v -i 'EXTENSION COMMENT' | awk '{print $NF}' | sort -u`, written to a mktemp scratch file, printed indented. Step 2 — iterates the discovered extensions and runs `psql ... -c 'CREATE EXTENSION IF NOT EXISTS \"<name>\";'` for each, with set +e/-e wrapping so a single failure (Supabase-only extension that postgresql-contrib-16 lacks) does not abort. Supabase-only regex covers pg_graphql, pgjwt, vault, supabase_vault, pgsodium, pg_net, pgaudit, wrappers — script logs them as warn-but-continue. Step 3 — `pg_restore --no-owner --no-privileges --jobs=4 --verbose --dbname=\"$LOCAL_DATABASE_URL\" \"$1\"` wrapped in set +e to capture rc without aborting; explicit log explaining non-zero rc is expected. Step 4 — prints the manual `npx prisma migrate status` invocation (script does not run npx itself per AC, since project root may differ on the operator's host). Step 5 — single anonymous DO block over (User→users, Property→properties, PropertyImage→property_images, Lead→leads, Conversation→conversations) using to_regclass to gracefully print '<not in schema>' for the Lead table (which is NOT in the current Prisma schema — see learnings); exact AC-mandated 5 labels printed in a fixed-width table. Step 6 — final summary literal: 'Restore complete. Compare row counts above against Supabase pre-cutover counts.' plus operator next-steps. `bash -n` exits 0; `chmod +x` confirmed. Typecheck shows only the 3 pre-existing supportTicket* errors that exist on main; zero new errors."
     },
     {
       "id": "US-005",

@@ -15,6 +15,16 @@ Started: Sat May  9 03:38:23 AM -03 2026
 - Modern apt repo signing: keyrings live at `/etc/apt/keyrings/`, source entries use `[signed-by=…]`. Do not use `apt-key add` (deprecated). The 01-provision-postgres.sh PGDG setup follows this pattern — copy it for any future apt-repo additions.
 - `pg_dump --jobs=N` is incompatible with `--format=custom`; parallel dump only works with `--format=directory`. The PRD AC for US-003 listed both — scripts here resolve the conflict by keeping `--format=custom` (single-file, easier scp/checksum) and dropping `--jobs`. Parallel restore (`pg_restore --jobs=4`) IS supported with custom-format dumps and is used in 03-restore-local.sh. Document the choice in a header comment so future readers don't "fix" it back.
 - Timestamps in operator artefacts (dump files, backups) use UTC ISO basic format: `date -u +%Y%m%dT%H%M%SZ` (e.g., `20260509T034512Z`). Avoid local time / colons — both confuse downstream tools and SCP filenames.
+- Prisma model → physical table mapping: every Prisma model in `prisma/schema.prisma` carries a `@@map("snake_case")` directive — the SQL table name is the `@@map` value, NOT the Prisma model name. Critical mappings: `User`→`users`, `Property`→`properties`, `PropertyImage`→`property_images`, `Conversation`→`conversations`, `ConversationMessage`→`conversation_messages`, `RentalProcess`→`rental_processes`. There is NO `Lead` / `leads` table in the current schema (the PRD AC for US-004 names it but it does not exist) — defensive scripts must use `to_regclass('public.<table>')` to handle the absence gracefully.
+- Bash idiom for "capture rc without aborting under `set -e`": wrap the call in `set +e ... set -e` rather than `|| true` (which discards the rc). Used for `pg_restore` (warnings cause non-zero exit which is non-fatal) and per-extension `CREATE EXTENSION` (Supabase-only extensions fail on a vanilla postgresql-contrib-16 install). Pattern:
+    ```
+    set +e
+    pg_restore … ; rc=$?
+    set -e
+    ```
+- Supabase-only Postgres extensions to expect in any production dump (NOT shipped with `postgresql-contrib-16`, so `CREATE EXTENSION` will fail and the application schema does NOT depend on them): `pg_graphql`, `pgjwt`, `vault`/`supabase_vault`, `pgsodium`, `pg_net`, `pgaudit`, `wrappers`. Any future script that touches extensions should warn-and-continue on these rather than abort.
+- `pg_restore --list` extension lines are formatted `<id>; <oid> <oid> EXTENSION - <name>` — the extension name is the LAST whitespace-delimited field. There is also an `EXTENSION COMMENT` line for each that must be filtered out (`grep -v 'EXTENSION COMMENT'`) to avoid double-creating.
+- For dynamic per-table `count(*)` from a label list, the cleanest single-statement pattern is a PL/pgSQL `DO` block iterating a `(VALUES …)` rowset, with `to_regclass('public.' || quote_ident(tbl))` to skip missing tables and `EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO cnt`. Output via `RAISE NOTICE` lands on stderr (psql shows it) and stays as a single SQL command per the AC.
 
 ---
 
@@ -69,4 +79,29 @@ Started: Sat May  9 03:38:23 AM -03 2026
   - Use `pg_dump --verbose` (not `-v`, which would conflict with `psql -v`); the long form is unambiguous and matches the rest of the script's flag style.
   - For psql connection-string commands, ALWAYS quote the URL: `psql "$SUPABASE_DIRECT_URL" -tAc "…"`. Unquoted URLs with `?` query strings (e.g., `?sslmode=require`) get glob-expanded by bash and silently break.
   - The TOC artefact (`<file>.toc`) is small (a few KB) and immensely useful for the operator's audit trail — it doubles as an extension list for `03-restore-local.sh`'s `pg_restore --list | grep EXTENSION` step.
+---
+
+## 2026-05-09 - US-004
+- Authored `scripts/db-migration/03-restore-local.sh` — restores a Supabase pg_dump into the local Postgres on desafio01 with extension prep and row-count verification.
+- Files changed:
+  - `scripts/db-migration/03-restore-local.sh` (new, +x) — Steps:
+    0. Arg validation: `$1` = dump file path (usage message if missing/empty); checks `LOCAL_DATABASE_URL` (default `postgresql://imoveis@127.0.0.1:5432/imoveis`); warns if `PGPASSWORD` unset; verifies `pg_restore` and `psql` on PATH.
+    1. Extension discovery: `pg_restore --list <dump> | grep -i 'EXTENSION ' | grep -v 'EXTENSION COMMENT' | awk '{print $NF}' | sort -u` → mktemp scratch file.
+    2. Extension creation: per-extension `psql ... -c 'CREATE EXTENSION IF NOT EXISTS "<name>";'` wrapped in set +e/-e; Supabase-only regex (`pg_graphql|pgjwt|vault|supabase_vault|pgsodium|pg_net|pgaudit|wrappers`) logs warn-and-continue.
+    3. Restore: `pg_restore --no-owner --no-privileges --jobs=4 --verbose --dbname="$LOCAL_DATABASE_URL" "$1"` with rc captured but non-fatal (Supabase-only extension warnings = non-zero rc).
+    4. Prints the manual `DATABASE_URL='…' npx prisma migrate status` invocation for the operator (script intentionally does not run npx since project root may differ).
+    5. Row-count table: anonymous `DO $$ … $$` block iterating (User→users, Property→properties, PropertyImage→property_images, Lead→leads, Conversation→conversations); uses `to_regclass` to print `<not in schema>` for the absent `leads` table without aborting.
+    6. Final summary literal: `Restore complete. Compare row counts above against Supabase pre-cutover counts.`
+  - `scripts/ralph/prd.json` — flipped US-004 `passes` to `true`, added implementation notes.
+- Acceptance verification:
+  - `bash -n scripts/db-migration/03-restore-local.sh` → exits 0.
+  - `chmod +x` confirmed (`-rwxr-xr-x`).
+  - All 11 AC items mapped to specific lines: shebang+pipefail (1-2,20), arg+usage (28-30), LOCAL_DATABASE_URL default (41), pg_restore --list extension awk (70-75), CREATE EXTENSION IF NOT EXISTS loop (97-103), pg_restore restore command (121-128), Prisma migrate status hint (135-140), row-count DO block (148-178), final summary (181-191).
+  - `npx tsc --noEmit` → only the 3 pre-existing `supportTicket*` errors from main; zero new errors (no TS files touched).
+- **Learnings for future iterations:**
+  - The PRD AC names a `Lead` table that does NOT exist in the current Prisma schema. Schema search confirmed: there is no `model Lead`, no `@@map("leads")`, and no related migration. Defensive approach: keep the AC-mandated 5 labels in the row-count table but use `to_regclass('public.leads')` to print `<not in schema>` rather than fail. Future stories that reference table lists should always grep `prisma/schema.prisma` for `@@map` first, since the Prisma model name and the SQL table name diverge in this codebase.
+  - `pg_restore --list` includes BOTH an `EXTENSION` row and an `EXTENSION COMMENT` row for every extension. `grep 'EXTENSION'` alone double-counts; the script filters `grep -v 'EXTENSION COMMENT'` to get a clean list.
+  - `pg_restore` exits non-zero on warnings (e.g., missing Supabase-only extensions) even when the schema/data restore is otherwise complete. Under `set -euo pipefail`, this aborts the script. Workaround: bracket the call with `set +e` / `set -e` and capture `$?` for an informational log. Same pattern is used for the per-extension `CREATE EXTENSION` loop.
+  - PL/pgSQL `DO $$ … $$` blocks are the cleanest way to satisfy a "single SQL query" AC when the query needs control flow (skip-if-missing-table, dynamic table names). `RAISE NOTICE` writes to stderr via psql; the output IS visible to the operator. Use `EXECUTE format('… %I', tbl)` for safe identifier quoting and `to_regclass('public.' || quote_ident(tbl))` to test table existence cheaply.
+  - The script intentionally does NOT call `npx prisma migrate status` itself — the AC mandates printing the command for the operator. Reason: the operator runs this script from a directory next to the dump file (e.g., `/var/backups/`), but the API project root with `node_modules/.bin/prisma` and `prisma/schema.prisma` is a separate path on the host. Hard-coding `cd /opt/imoveis-backend` would couple the script to one host layout.
 ---
