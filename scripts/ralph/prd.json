@@ -161,8 +161,8 @@
         "`npx prisma validate` passes (schema is intact and consistent with migrations)"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. Removed the abandoned supabase/ directory via `git rm -r supabase/`. Pre-flight verified the only versioned content was supabase/migrations/20260426211018_add_location_fields_to_property.sql (0 bytes — empty file, nothing to lose) plus seven supabase/.temp/ CLI metadata files (cli-latest, gotrue-version, pooler-url, postgres-version, project-ref, rest-version, storage-version). Equivalent prisma migration confirmed: prisma/migrations/20260424233623_add_search_fields/migration.sql (lines 18-19) adds `latitude` and `longitude` DOUBLE PRECISION columns to the `properties` table — same columns the supabase migration filename advertises. The supabase migration file being empty (0 bytes) confirms the schema change was already shipped via the prisma migration; the supabase file was a stale CLI artefact, not a divergent source of truth. AC #2 satisfied: matching prisma migration name = `20260424233623_add_search_fields`. AC #3 contingency NOT triggered (the supabase file was empty, not a divergent SQL block). `ls supabase/ 2>/dev/null` → exit 2, no output (directory removed). `git status --short` shows 8 staged `D` entries for the deleted files. `npx tsc --noEmit` shows only the 3 pre-existing supportTicket* errors that exist on main; zero new errors. `npx prisma validate` exits 0 with `The schema at prisma/schema.prisma is valid`."
     },
     {
       "id": "US-009",

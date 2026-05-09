@@ -192,3 +192,25 @@ Started: Sat May  9 03:38:23 AM -03 2026
   - documentation/ already contains business-facing Portuguese guides (app_guide.md, frequently_asked_questions.md, etc.). The rollback runbook is in English to match the tone and audience of the cutover scripts and `scripts/db-migration/README.md` (operator-facing English). When adding to documentation/ in the future, match the audience: end-user docs in pt-BR, operator/runbook docs in English.
   - NG-3 ("we lose writes between cutover and rollback") is the most important constraint in the source PRD for incident communication. The runbook does not just reference NG-3 — it spells out the integration-collision implications (Stripe charges, WhatsApp message IDs) so the on-call operator does not need to chase down what NG-3 means at 3am. Future runbooks for any one-way migration should do the same: never make the reader chase a numbered reference for the central trade-off.
 ---
+
+## 2026-05-09 - US-008
+- Removed the abandoned `supabase/` directory from the repo via `git rm -r supabase/`.
+- Files changed (8 deletions staged):
+  - `supabase/migrations/20260426211018_add_location_fields_to_property.sql` (0 bytes — empty stale file)
+  - `supabase/.temp/cli-latest`, `gotrue-version`, `pooler-url`, `postgres-version`, `project-ref`, `rest-version`, `storage-version` (Supabase CLI metadata)
+  - `scripts/ralph/prd.json` — flipped US-008 `passes` to `true`, added implementation notes.
+- Acceptance verification:
+  - AC #1: `git rm -r supabase/` removed all 8 tracked files; output captured 8 `rm 'supabase/...'` lines.
+  - AC #2: equivalent prisma migration confirmed at `prisma/migrations/20260424233623_add_search_fields/migration.sql` lines 18-19 — `ADD COLUMN "latitude" DOUBLE PRECISION` + `ADD COLUMN "longitude" DOUBLE PRECISION` on `properties`. The supabase file's filename advertised "add_location_fields_to_property" but its body was empty (0 bytes per `wc -c`), confirming the actual schema change already lives in the prisma migration and the supabase file was a stale CLI artefact, not a divergent source of truth.
+  - AC #3 contingency NOT triggered: the supabase file was empty, so there is no SQL to port forward.
+  - AC #4: `ls supabase/ 2>/dev/null` returns nothing and exits 2 (directory gone).
+  - AC #5: `git status --short` shows 8 `D` entries for the deleted paths plus the unrelated `??` archive entries from prior milestones.
+  - AC #6 (typecheck): `npx tsc --noEmit` shows only the 3 pre-existing `supportTicket*` errors that exist on main; zero new errors (no TS files touched).
+  - AC #7 (`npx prisma validate`): exits 0 with `The schema at prisma/schema.prisma is valid 🚀`.
+- **Learnings for future iterations:**
+  - The `supabase/` directory was BOTH a stale CLI workspace (`supabase/.temp/` holds the version pins of whichever Supabase CLI last logged in: gotrue, pooler, storage, etc.) AND a parallel migration source (`supabase/migrations/`). When ripping out a Supabase integration, BOTH halves need to go — `supabase/.temp/` files leak the project-ref (`project-ref` file contained `qkmseleljscluhhrcpaz`) and would survive a naive "delete migrations only" cleanup.
+  - The empty migration file (`20260426211018_add_location_fields_to_property.sql` was 0 bytes) is a tell that the team had already migrated the schema to prisma and abandoned the supabase migration midway — the CLI created the placeholder, then the prisma migration shipped the real DDL. When auditing parallel migration directories, ALWAYS `wc -c` each file first; an empty file is the signature of an abandoned cutover, not a hidden bug.
+  - When the AC names a "matching migration name" check (here: AC #2 says "record the matching prisma migration name in progress.txt"), the match is by *content* (does this DDL exist somewhere in prisma/migrations?), not by filename or timestamp. The supabase file was timestamped 2026-04-26 but the prisma migration that actually shipped the columns is dated 2026-04-24 — earlier, not later. Future migration audits should grep for the columns/indices/constraints the abandoned file would have added, not match on filename or timestamp.
+  - `git rm -r` on a tracked directory removes both files AND the working-tree directory. After running it, `ls supabase/` returns "No such file or directory" — there is no separate `rmdir` step and the empty parent dir does not linger. Document this for any future "delete a vendored directory" stories so the operator does not panic when `ls` fails.
+  - For US-009 / US-010 (final scrub stories), the only remaining versioned Supabase references should now be in `documentation/runbook-rollback-supabase.md` (intentional), `scripts/db-migration/` (operator scripts that name the source pooler), `tasks/`, `.planning/`, `scripts/ralph/`, and `plan_hospedagem.md` (US-009 will rewrite this). The directory removal in US-008 closes the largest single source of supabase artefacts in the tree.
+---
