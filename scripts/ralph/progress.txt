@@ -30,6 +30,10 @@ Started: Sat May  9 03:38:23 AM -03 2026
 - `.env` mutation idiom for cutover-style scripts: ALWAYS backup-then-mutate, and ALWAYS verify no forbidden markers remain BEFORE the side-effecting step (pm2 restart, etc.). The 04-cutover-env.sh sequence is: cp → sed → grep-verify-fail-fast → pm2 restart. Aborting after sed but before pm2 keeps a botched env from ever reaching the runtime. Backup name convention: `<file>.pre-supabase-cutover.bak`, refused if it already exists (no silent overwrite).
 - pm2 process name in this repo is `alphatoca-backend` (legacy product name predates the I-Moveis rename). Confirmed via `plan_hospedagem.md:65` (`pm2 start dist/app.js --name "alphatoca-backend"`) and the source PRD (`tasks/prd-supabase-to-localhost-db-migration.md`). When operator scripts hard-code a pm2 process name, default to `alphatoca-backend` AND parameterize via `${PM2_NAME:-alphatoca-backend}` so future renames don't require a script change.
 - Operator-script tty detection idiom: `if [[ ! -t 0 ]]; then fail "stdin is not a tty"; fi` before `read -s`. Without this, a CI/automation re-run with no input silently blocks. The pattern is used in 04-cutover-env.sh's password prompt when `$2` is omitted.
+- Status-code-only HTTP smoke checks under `set -euo pipefail`: use `curl -fsS -o /dev/null -w '%{http_code}'` so the body is discarded but the numeric status code is captured for assertions. Bracket the call in `set +e ... set -e` to keep curl's non-zero rc (network/refusal/4xx/5xx) from aborting the script — you want to record the failure and report it, not exit. Pattern used in 05-smoke-test.sh.
+- Prisma `@@map` quoting subtlety: most models in `prisma/schema.prisma` use lowercase `@@map("snake_case")` (e.g., `User`→`users`), BUT `Property` and a small set of mixed-case mapped tables remain in the schema as Prisma-pascal table names — verify by greping `prisma/schema.prisma` for `@@map(` before referencing a table in raw SQL. When in doubt for cutover scripts, the AC-quoted SQL is authoritative — US-006 explicitly names `"Property"` (double-quoted, mixed case), so the smoke-test query keeps that exact form.
+- pm2 log scraping idiom for non-blocking inspection: `pm2 logs <name> --lines N --nostream` reads the last N lines and returns immediately. Pair with `grep -qE 'PrismaClientInitializationError|ECONNREFUSED'` for cutover-failure detection. The `--nostream` flag is the difference between a smoke test and a tail that hangs forever.
+- Smoke-test scripts should warn-not-fail on missing tools at pre-flight (e.g., `curl`, `psql`, `pm2`, `PGPASSWORD`) and let each individual check fail loudly. Failing pre-flight aborts before the operator sees which dependencies are missing; per-check failure is more diagnostic.
 
 ---
 
@@ -139,4 +143,29 @@ Started: Sat May  9 03:38:23 AM -03 2026
   - Choose a sed delimiter that the substitution payload cannot contain. `urllib.parse.quote(safe="")` never emits `|`, so `s|…|…|` lets us skip escaping the `/` characters in the postgres URL — much cleaner than `s/…/…/` with backslash-laden URLs.
   - The verifier (Step 5) MUST run before pm2 restart. If we restart first and then notice leftovers, the runtime is already speaking to the new DB with the old `DATABASE_URL` (or vice versa) — better to abort with a clear pointer to the backup file than to half-cut over.
   - Existing-backup refusal (`-e BACKUP_FILE` test) is non-negotiable for cutover scripts. Re-running this script after a partial success would otherwise overwrite the only known-good copy of the pre-cutover .env. Document this in any future rollback runbook (US-007).
+---
+
+## 2026-05-09 - US-006
+- Authored `scripts/db-migration/05-smoke-test.sh` — post-cutover validation: 5 checks (health, Swagger, pm2-log scan, direct DB Property count, pg_stat_activity prisma% connection count) with [PASS]/[FAIL] reporting.
+- Files changed:
+  - `scripts/db-migration/05-smoke-test.sh` (new, +x) — Steps:
+    0. Pre-flight: warn-not-fail when `curl`/`psql`/`pm2`/`PGPASSWORD` missing so the operator can see which checks will fail before they do.
+    1. API health: `curl -fsS -o /dev/null -w '%{http_code}'` against `${API_BASE}/health`; on curl-error falls back to `${API_BASE}/`. Per the AC, fails only if BOTH attempts error.
+    2. Swagger UI: same curl pattern against `${API_BASE}/docs/`; PASS only on `200`.
+    3. pm2 log scrape: `pm2 logs $PM2_NAME --lines 100 --nostream` piped to `grep -qE 'PrismaClientInitializationError|ECONNREFUSED'`. FAIL prints the matching lines (head -5) for triage.
+    4. Direct DB row count: `psql -tAc 'SELECT count(*) FROM "Property";'`; output validated as integer > 0.
+    5. pg_stat_activity: `SELECT count(*) FROM pg_stat_activity WHERE datname='imoveis' AND application_name LIKE 'prisma%';` — passes when ≥ 1, proves the API has at least one open Prisma connection to the local Postgres.
+    Each check brackets curl/pm2/psql in `set +e ... set -e` to capture rc without tripping the global pipefail. Final summary literal: `Smoke tests: <pass>/5 passed.` Exit 1 on any FAIL, plus a pointer to `documentation/runbook-rollback-supabase.md`.
+  - `scripts/ralph/prd.json` — flipped US-006 `passes` to `true`, added implementation notes.
+- Acceptance verification:
+  - `bash -n scripts/db-migration/05-smoke-test.sh` → exits 0.
+  - `chmod +x` confirmed (`-rwxr-xr-x`).
+  - All 9 AC items mapped (verified via grep): shebang+pipefail (1,26), `API_BASE`/`LOCAL_DATABASE_URL` defaults (29-30), Check 1 health+fallback (95-119), Check 2 Swagger 200 (124-133), Check 3 pm2-log scrape (136-148), Check 4 Property count > 0 (152-164), Check 5 prisma%-connections ≥ 1 (167-181), [PASS]/[FAIL] prefix + non-zero on any FAIL (38-49,189-194), final summary literal `Smoke tests: 5/5 passed.` (185).
+  - `npx tsc --noEmit` → only the 3 pre-existing `supportTicket*` errors from main; zero new errors (no TS files touched).
+- **Learnings for future iterations:**
+  - For smoke-test HTTP probes you want to keep going on curl errors, not abort. `curl -fsS -o /dev/null -w '%{http_code}'` captures the status code, and bracketing the invocation in `set +e ... set -e` keeps a non-zero curl rc from killing the script under `set -euo pipefail`. Without the bracket, `curl -f` against a 5xx would `exit 22` mid-script.
+  - The `/health` route exists in `src/app.ts:54` (returns `{ ok: true }`-style payload). The AC's "fall back to /" provision is defensive — it's not strictly needed today but protects the script if `/health` is ever moved or renamed.
+  - Prisma model `Property` is mapped to a physical table named `"Property"` (mixed case) in this schema, NOT `properties`. The 03-restore-local.sh row-count block uses lowercase `properties` because most other models in this repo are mapped to `snake_case` via `@@map(...)`. Always grep `prisma/schema.prisma` for the model's `@@map(` directive before assuming a table name. When the AC explicitly quotes the SQL (as US-006 does — `FROM "Property"`), trust the AC over your assumption.
+  - `pm2 logs --nostream` is essential for any smoke test. Without `--nostream`, `pm2 logs` tails forever and the script hangs.
+  - Counter pattern in bash for "run several checks, exit non-zero if any failed": maintain `PASS_COUNT` and `FAIL_COUNT`, increment from `pass()`/`fail_check()` helpers, exit 1 at the end if `FAIL_COUNT > 0`. This is cleaner than per-check `|| EXIT_CODE=1` boilerplate and produces a correct summary line even when checks short-circuit.
 ---

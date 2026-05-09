@@ -125,8 +125,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. scripts/db-migration/05-smoke-test.sh authored, chmod +x. Configurable via API_BASE (default http://localhost:3000), LOCAL_DATABASE_URL (default postgresql://imoveis@127.0.0.1:5432/imoveis with PGPASSWORD), PM2_NAME (default alphatoca-backend). Pre-flight: warns (does not abort) if curl/psql/pm2/PGPASSWORD missing — lets the operator see exactly which checks will fail. Check 1 — API health: tries `${API_BASE}/health` first, falls back to `${API_BASE}/` only when the first errored, fails only if both attempts errored (matches AC 'fails only if both 5xx'); curl uses `-fsS -o /dev/null -w '%{http_code}'` to capture status without leaking body. Check 2 — Swagger UI: `${API_BASE}/docs/` must return 200 exactly. Check 3 — pm2 logs scan: `pm2 logs $PM2_NAME --lines 100 --nostream` then `grep -qE 'PrismaClientInitializationError|ECONNREFUSED'`; FAIL prints the matching lines (head -5) for triage. Check 4 — direct DB row count: `psql -tAc 'SELECT count(*) FROM \"Property\";'` (Prisma model `Property` is mapped to physical table `\"Property\"` with mixed-case quoting in the dump — verified by reading prisma/schema.prisma's `@@map`). Output validated as a non-negative integer; passes only when > 0. Check 5 — pg_stat_activity: counts rows with `datname='imoveis' AND application_name LIKE 'prisma%'`; passes when ≥ 1, proving the API is actively connected to the local Postgres. Each check uses `set +e/-e` bracketing to capture rc without aborting (per Codebase Patterns idiom). Final summary literal `Smoke tests: <pass>/5 passed.` and exit 1 on any FAIL with a pointer to the rollback runbook. `bash -n` exits 0; `--help` exits 2 with usage. Typecheck shows only the 3 pre-existing supportTicket* errors that exist on main; zero new errors."
     },
     {
       "id": "US-007",
