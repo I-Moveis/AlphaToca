@@ -144,8 +144,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-05-09. documentation/runbook-rollback-supabase.md authored. Sections (in order): header + audience + cross-links to source PRD and scripts/db-migration/README.md → Pre-requisites (Supabase project still active, .env.pre-supabase-cutover.bak present, no direct frontend Supabase usage, original SUPABASE_ACCESS_TOKEN reachable; placeholders for Day 0 / +7 / +14 dates the operator fills during cutover step 4) → When to roll back (table of triggers: DB unreachable >5min, data corruption, p95 latency >10× baseline, disk-full, schema mismatch, persistent auth failure) plus 'Do NOT roll back for' counter-list → Procedure (numbered 1–7: SSH desafio01@desafio01.alphaedtech, cd to API dir, restore .env from .pre-supabase-cutover.bak with broken-env preservation, pm2 restart alphatoca-backend --update-env, curl http://localhost:3000/health, pm2 logs --lines 100 --nostream, announce in #engineering) → Data Loss Warning (explicit lost-writes statement, NG-3 reference, integration-collision callouts) → Post-rollback (incident report fields, #engineering post, freeze further migration attempts, preserve forensics, plus 'Backup missing' sub-procedure) → Decommission Timeline (Day 0 / +7 / +14 table with date placeholders). The scripts/db-migration/README.md already linked the runbook from US-001 in three places (Pre-flight Checks, Rollback section, Decommission Timeline) — no README edit needed. Typecheck shows only the 3 pre-existing supportTicket* errors that exist on main; zero new errors (no TS files touched)."
     },
     {
       "id": "US-008",
