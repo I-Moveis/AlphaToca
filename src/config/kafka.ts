@@ -1,4 +1,4 @@
-import { Kafka, logLevel, type IAdmin } from 'kafkajs';
+import { Kafka, logLevel, type Admin } from 'kafkajs';
 import { logger } from './logger';
 
 if (!process.env.KAFKA_BROKERS) {
@@ -14,21 +14,19 @@ export const kafka = new Kafka({
   brokers,
   logLevel: logLevel.ERROR,
   logCreator: () => {
-    return ({ namespace, level, label, log }) => {
-      const logFn = level <= logLevel.ERROR ? logger.error : logger.debug;
-      logFn({ namespace, level, label, ...log });
+    return ({ log }) => {
+      const { message, ...extra } = log;
+      logger.info({ ...extra }, `[Kafka] ${message}`);
     };
   },
 });
 
-export const admin: IAdmin = kafka.admin();
+export const admin: Admin = kafka.admin();
 
 export const producer = kafka.producer({
-  allowAutoTopicCreation: false,
+  allowAutoTopicCreation: true,
   idempotent: true,
   maxInFlightRequests: 5,
-  compression: 1, // GZIP
-  timeout: Number(process.env.KAFKA_PRODUCER_TIMEOUT ?? 30000),
 });
 
 export const consumer = kafka.consumer({
