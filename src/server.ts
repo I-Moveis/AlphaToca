@@ -2,8 +2,6 @@ import 'dotenv/config';
 import http from 'http';
 
 import app from './app';
-import './workers/whatsappWorker';
-import './workers/visitReminderWorker';
 import { setupSwagger } from './config/swagger';
 import { bootstrapLangSmith } from './config/langsmith';
 import { assertRagSecrets } from './config/rag';
@@ -13,19 +11,32 @@ import { logger } from './config/logger';
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-// Fail-fast: valida configuração crítica antes de aceitar requisições.
-assertRagSecrets();
-validateWebhookConfig();
+(async () => {
+    if (process.env.DISABLE_WORKERS === 'true') {
+        logger.warn('[server] workers desabilitados via DISABLE_WORKERS');
+    } else {
+        await import('./workers/whatsappWorker');
+        await import('./workers/visitReminderWorker');
+    }
 
-// Inicializa integrações
-bootstrapLangSmith();
-setupSwagger(app);
+    // Fail-fast: valida configuração crítica antes de aceitar requisições.
+    if (process.env.DISABLE_RAG_VALIDATION === 'true') {
+        logger.warn('[server] RAG secret validation pulada via DISABLE_RAG_VALIDATION — endpoints RAG podem falhar');
+    } else {
+        assertRagSecrets();
+    }
+    validateWebhookConfig();
 
-const server = http.createServer(app);
+    // Inicializa integrações
+    bootstrapLangSmith();
+    setupSwagger(app);
 
-// Anexa WebSocket (Socket.IO) ao servidor HTTP
-initializeSocket(server);
+    const server = http.createServer(app);
 
-server.listen(port, '0.0.0.0', () => {
-    logger.info({ port }, '[server] HTTP + WebSocket running on 0.0.0.0');
-});
+    // Anexa WebSocket (Socket.IO) ao servidor HTTP
+    initializeSocket(server);
+
+    server.listen(port, '0.0.0.0', () => {
+        logger.info({ port }, '[server] HTTP + WebSocket running on 0.0.0.0');
+    });
+})();

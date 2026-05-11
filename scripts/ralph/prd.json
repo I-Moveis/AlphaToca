@@ -59,7 +59,7 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "US-001 já adicionou outras entradas em .env.example; esta US complementa adicionando as duas flags de debug no fim do arquivo, sem deletar nada. Cuidado para não regredir ou conflitar com US-001 ao editar o mesmo arquivo."
     },
     {

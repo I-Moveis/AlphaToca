@@ -9,11 +9,13 @@ Branch: ralph/hospedagem-local
 - Pre-existing tsc errors on `main` (post-#67 merge): `src/services/supportTicketMessageService.ts` and `src/services/supportTicketService.ts` reference a `supportTicketMessage` Prisma model + `messages` include that aren't in the generated Prisma client. NOT introduced by Ralph — verify by running `git stash && git checkout main && npx tsc --noEmit` before blaming your change. Treat the AC "Typecheck passes" as "no NEW errors" for stories that don't touch `src/`.
 - Source PRD lives at `tasks/prd-hospedagem-local.md` — read it for non-AC context (decisions baked in, technical considerations, non-goals).
 - Auth middleware (`src/middlewares/authMiddleware.ts`) uses Firebase Admin SDK, not Auth0 — apesar das vars AUTH0_* aparecerem em `.env.example` (artefato histórico).
-- Server boot file `src/server.ts` segue ordem fixa: dotenv/config → http → app → workers (imports estáticos) → assertRagSecrets → validateWebhookConfig → bootstrapLangSmith → setupSwagger → http.createServer → initializeSocket → server.listen. Não reordenar.
-- Logger convention: `logger.info({ ctx }, '[server] mensagem')` ou `logger.warn({ ctx }, '[server] mensagem')` — sempre prefixo entre colchetes.
+- Server boot file `src/server.ts` segue ordem fixa (após US-003, dentro de IIFE async): dotenv/config → http → app → (cond) workers (await import dinâmico) → (cond) assertRagSecrets → validateWebhookConfig → bootstrapLangSmith → setupSwagger → http.createServer → initializeSocket → server.listen. Não reordenar.
+- Logger convention: `logger.info({ ctx }, '[server] mensagem')` ou `logger.warn({ ctx }, '[server] mensagem')` — sempre prefixo entre colchetes. Mensagens sem ctx usam `logger.warn('[server] mensagem')` (1 arg).
 - docker-compose.yml hoje só tem Redis em 6380:6379 — Postgres é nativo via apt (`scripts/db-migration/01-provision-postgres.sh` provisiona role/db `imoveis`).
 - Em `.env.example`, o bloco POSTGRES_USER/PASSWORD/DB é APENAS para o perfil `optional-db` do docker-compose (Postgres em Docker na porta 5433). O default real (Postgres nativo em 5432) usa role/db `imoveis`, configurada via DATABASE_URL/DIRECT_URL. Não confundir os dois ao alterar credenciais — admin/alphatoca = Docker opcional; imoveis/imoveis = nativo.
 - Prisma 6 exige DIRECT_URL além de DATABASE_URL para `prisma migrate` funcionar. Mantenha ambas com a mesma connection string em setups locais (sem PgBouncer).
+- tsconfig.json: `module: CommonJS` + `target: ES2022` — top-level await NÃO é suportado. Para usar await em entry points, envolva em IIFE async: `(async () => { ... })();`.
+- Feature flags de debug em `src/server.ts` (US-003): `DISABLE_WORKERS=true` pula imports de whatsappWorker/visitReminderWorker; `DISABLE_RAG_VALIDATION=true` pula assertRagSecrets(). Defaults preservam comportamento atual.
 
 ---
 
@@ -47,5 +49,25 @@ Branch: ralph/hospedagem-local
   - Docker Compose v2 `profiles: ["nome"]` é a forma idiomática de tornar serviços opt-in. `docker compose up -d` ignora serviços com profile; só sobem quando você passa `--profile nome` ou `COMPOSE_PROFILES=nome`.
   - Volumes nomeados (`postgres_data`) exigem declaração no bloco top-level `volumes:` mesmo quando referenciados em apenas 1 serviço — caso contrário Compose trata como bind mount com path relativo.
   - Quando o serviço Docker Postgres (porta host 5433) coexiste com Postgres nativo (porta host 5432), as duas instâncias são independentes — DATABASE_URL em .env continua apontando para 5432 (nativo); para usar o Docker, dev precisa editar manualmente DATABASE_URL para 5433. Esse trade-off está documentado no comentário do compose e (futuramente) será explicitado no README (US-004).
+---
+
+## 2026-05-11 19:50 - US-003
+- Implementado: Feature flags DISABLE_WORKERS e DISABLE_RAG_VALIDATION em src/server.ts
+- Files changed:
+  - src/server.ts: convertido para IIFE async (`(async () => { ... })()`) — tsconfig usa `module: CommonJS` então top-level await não é opção. Imports estáticos de `./workers/whatsappWorker` e `./workers/visitReminderWorker` removidos do topo e substituídos por `await import(...)` dinâmicos dentro do bloco condicional.
+  - src/server.ts: bloco condicional `if (process.env.DISABLE_WORKERS === 'true')` pula os dois `await import` e emite `logger.warn('[server] workers desabilitados via DISABLE_WORKERS')`. Default (undefined / '' / 'false') executa os dois imports — comportamento equivalente ao estático original.
+  - src/server.ts: `assertRagSecrets()` envolto em `if (process.env.DISABLE_RAG_VALIDATION === 'true')` — quando true, pula e emite `logger.warn('[server] RAG secret validation pulada via DISABLE_RAG_VALIDATION — endpoints RAG podem falhar')`. Default mantém validação ativa.
+  - src/server.ts: ordem de validateWebhookConfig() → bootstrapLangSmith() → setupSwagger(app) → http.createServer → initializeSocket(server) → server.listen() preservada exatamente.
+  - .env.example: 2 entradas comentadas adicionadas no fim do arquivo, sob header "# Feature flags de debug (branch hospedagem_local)" — formato exato pedido pelo AC.
+- Nada alterado em src/workers/, src/queues/, src/config/rag.ts, controllers, routes, schemas, prisma.
+- Quality checks:
+  - `npx tsc --noEmit`: 4 erros pré-existentes em supportTicket*.ts (mesmos da Codebase Patterns) — nenhum NOVO erro introduzido pelas mudanças em src/server.ts.
+  - grep `DISABLE_WORKERS|DISABLE_RAG_VALIDATION` em .env.example: ambas presentes 1× cada, comentadas, no final do arquivo.
+  - grep US-001 (DATABASE_URL/DIRECT_URL/5444): edits de US-001 intactos — DATABASE_URL e DIRECT_URL apontando para 127.0.0.1:5432 (1× cada), zero ocorrências de 5444.
+- **Learnings for future iterations:**
+  - tsconfig do projeto: `module: CommonJS` + `target: ES2022`. Top-level await NÃO é suportado nesta combinação (precisaria de `module: ES2022` ou `Node16`). IIFE async é o padrão correto para entry points que precisam de await condicional.
+  - Quando usar `logger.warn` sem objeto de contexto, passar 1 string só é OK pelo signature do pino (`warn(msg)` ou `warn(obj, msg)`). Manter o prefixo `[server]` para consistência.
+  - Ao editar src/server.ts, lembrar que o boot envolve workers BullMQ — pular workers via flag tem efeito cascata: filas WhatsApp e lembretes de visita não processam jobs até reativar a flag. Útil para debug local sem Redis/BullMQ, mas testes de integração que dependam de filas vão falhar silenciosamente.
+  - Ao editar .env.example, sempre verificar antes que edits anteriores (DATABASE_URL/DIRECT_URL de US-001) permaneçam intactos — fácil de regredir se substituir blocos grandes em vez de fazer append no fim.
 ---
 
