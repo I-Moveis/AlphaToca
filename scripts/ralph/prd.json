@@ -39,7 +39,7 @@
         "Typecheck passes (npx tsc --noEmit — sanity check)"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

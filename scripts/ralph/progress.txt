@@ -32,3 +32,20 @@ Branch: ralph/hospedagem-local
   - Próxima iteração (US-003) vai adicionar mais entradas (DISABLE_WORKERS, DISABLE_RAG_VALIDATION) ao final do .env.example — não regredir os comentários de header de DATABASE_URL.
 ---
 
+## 2026-05-11 19:35 - US-002
+- Implementado: Adicionar serviço Postgres opcional (perfil optional-db) ao docker-compose.yml
+- Files changed:
+  - docker-compose.yml: adicionado serviço `postgres` com image postgres:16-alpine, profile `optional-db`, mapeamento 5433:5432, environment lendo POSTGRES_USER/PASSWORD/DB do .env, volume nomeado postgres_data
+  - docker-compose.yml: bloco `volumes:` declarado no topo (necessário para volume nomeado)
+  - docker-compose.yml: comentário no topo explicando comando default (redis-only) vs comando com perfil (--profile optional-db)
+  - Serviço redis (alphatoca_redis em 6380:6379) permanece inalterado e sem profile (sobe por default)
+- Quality checks:
+  - `docker compose config` (default): mostra apenas redis (postgres oculto sem profile) — comportamento correto
+  - `docker compose --profile optional-db config`: mostra ambos serviços + volume postgres_data, sintaxe YAML válida
+  - `npx tsc --noEmit`: 4 erros pré-existentes em supportTicket*.ts (mesmos da Codebase Patterns) — nenhum NOVO erro introduzido
+- **Learnings for future iterations:**
+  - Docker Compose v2 `profiles: ["nome"]` é a forma idiomática de tornar serviços opt-in. `docker compose up -d` ignora serviços com profile; só sobem quando você passa `--profile nome` ou `COMPOSE_PROFILES=nome`.
+  - Volumes nomeados (`postgres_data`) exigem declaração no bloco top-level `volumes:` mesmo quando referenciados em apenas 1 serviço — caso contrário Compose trata como bind mount com path relativo.
+  - Quando o serviço Docker Postgres (porta host 5433) coexiste com Postgres nativo (porta host 5432), as duas instâncias são independentes — DATABASE_URL em .env continua apontando para 5432 (nativo); para usar o Docker, dev precisa editar manualmente DATABASE_URL para 5433. Esse trade-off está documentado no comentário do compose e (futuramente) será explicitado no README (US-004).
+---
+
