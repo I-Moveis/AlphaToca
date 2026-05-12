@@ -25,6 +25,8 @@ export const adminController = {
         usersByRole,
         propertiesByStatus,
         propertiesByModeration,
+        openSupportTickets,
+        pendingReports,
       ] = await Promise.all([
         prisma.user.count(),
         prisma.property.count(),
@@ -32,6 +34,8 @@ export const adminController = {
         prisma.user.groupBy({ by: ['role'], _count: { _all: true } }),
         prisma.property.groupBy({ by: ['status'], _count: { _all: true } }),
         prisma.property.groupBy({ by: ['moderationStatus'], _count: { _all: true } }),
+        prisma.supportTicket.count({ where: { status: 'OPEN' } }),
+        prisma.report.count({ where: { status: 'PENDING' } }),
       ]);
 
       const toCountMap = <K extends string>(rows: any[], key: K) =>
@@ -50,6 +54,8 @@ export const adminController = {
           properties: totalProperties,
           visits: totalVisits,
           pendingModeration,
+          openSupportTickets,
+          pendingReports,
         },
         usersByRole: toCountMap(usersByRole, 'role'),
         propertiesByStatus: toCountMap(propertiesByStatus, 'status'),
