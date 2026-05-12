@@ -47,7 +47,10 @@ app.use(
 );
 
 // Serve static files from the 'uploads' directory
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Mounted on both paths: DB stores `/uploads/...` (direct), frontend prepends API base → `/api/uploads/...`.
+const uploadsStatic = express.static(path.join(__dirname, '../uploads'));
+app.use('/uploads', uploadsStatic);
+app.use('/api/uploads', uploadsStatic);
 
 // Liveness probe — processo está respondendo.
 app.get('/health', (req: Request, res: Response) => {
