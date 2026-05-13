@@ -9,6 +9,8 @@ Started: Wed May 13 04:20:36 PM -03 2026
 - Tests in `tests/` follow a `supertest` + `request(app)` pattern. `tests/contractPdf.test.ts` is the canonical reference for tests that need a real fixture file under `uploads/` — it uses `beforeAll`/`afterAll` to mkdir/rm a temp dir under `UPLOADS_ROOT = path.resolve(__dirname, '../uploads')`.
 - Tests that import `src/app` must set Firebase env vars (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) BEFORE the `import app from '../src/app'` line, because `validateAuthConfig()` runs at module load.
 - `npm run build` runs `tsc` (no emit issues at HEAD). Use it as the typecheck gate before commit.
+- For tests that hit ONLY the static mounts (anything under `/uploads` or `/api/uploads`), no auth-middleware mocking is needed — those mounts sit ahead of `authStack` in `src/app.ts`. Just set the Firebase env vars and import `app`; the firebase init in `src/config/firebase.ts` swallows credential errors in a try/catch and the unrelated checkJwt is never invoked. Compare with `contractPdf.test.ts` which DOES mock `authMiddleware` because it hits a protected endpoint.
+- Before editing `scripts/ralph/prd.json`, validate the file with `jq . scripts/ralph/prd.json` — prior Ralph cycles have shipped malformed JSON (a missing `},{` between user stories), and editing on top of broken JSON quietly produces non-parseable output.
 
 ---
 
@@ -23,4 +25,17 @@ Started: Wed May 13 04:20:36 PM -03 2026
   - The branch `main` had drifted 30 commits ahead of the local checkout. The Ralph-managed files (`scripts/ralph/{.last-branch,prd.json,progress.txt}`) had three-way merge conflicts on pull. Resolution: `git checkout --theirs` on those files preserved the new Ralph cycle's state; the previous cycle's artifacts had already been archived to `scripts/ralph/archive/2026-05-13-supabase-to-localhost-db-migration/`.
   - `node_modules` is NOT checked in and was missing on fresh checkout — `npm install` is a required prerequisite before `npm run build`.
   - `express.static`'s `setHeaders` callback receives a `http.ServerResponse`, not an Express `Response`. Use the node `http` type to keep the typecheck strict and avoid `any`.
+---
+
+## 2026-05-13 - US-002
+- Added `tests/uploadsStaticMount.test.ts` — 9 supertest cases that lock in the dual-mount contract built in US-001. Fixture (`uploads/test-fixture/sample.png`, a real 1x1 PNG) is created in `beforeAll` and removed in `afterAll`.
+- Coverage: (a) `GET /uploads/test-fixture/sample.png` → 200 + `content-type` starts with `image/`; (b) same for `/api/uploads/test-fixture/sample.png`; (c) `cross-origin-resource-policy: cross-origin` present on both routes; (d) `cache-control` carries `max-age` on both routes; (e) three traversal attempts (`/uploads/../package.json`, `/api/uploads/../package.json`, `/uploads/%2e%2e/package.json`) all return non-200.
+- Fixed pre-existing malformed JSON in `scripts/ralph/prd.json`: between US-001 and US-002 the closing `},` of US-001 and the opening `{ "id": "US-002", "title": ... ` of US-002 were missing, so `jq` and any downstream tool could not parse the file. Restored proper structure; verified with `jq '.userStories | length' => 3`.
+- Files changed: `tests/uploadsStaticMount.test.ts` (new), `scripts/ralph/prd.json` (US-002 structure repaired + US-002 marked `passes: true` with notes), `scripts/ralph/progress.txt` (this entry + new Codebase Patterns lines).
+- Quality gates: `npm test -- tests/uploadsStaticMount.test.ts` → 9/9 pass (~700ms). `npm run build` → exit 0.
+- **Learnings for future iterations:**
+  - The test fixture used a real 1x1 PNG byte sequence rather than arbitrary bytes. Even though `express.static` decides `Content-Type` from the file extension (so any bytes would have satisfied the `^image/` assertion), the honest PNG bytes guard against a future maintainer tightening the assertion to inspect the body.
+  - Static-mount tests do NOT need the `authMiddleware` mock that `contractPdf.test.ts` uses — they only exercise routes registered before the `authStack`. This trims the test file by ~50 lines vs. copying the contractPdf scaffolding wholesale.
+  - Supertest sends `/uploads/../package.json` as-is to the server; the path traversal is rejected by `send` (the lib backing `express.static`) once it resolves and detects the path escapes the configured root. The `%2e%2e` case is decoded by `send` and rejected identically.
+  - The Ralph prd.json was malformed before this iteration started. Future iterations should run `jq . scripts/ralph/prd.json` as a sanity check before relying on its contents — corrupt PRD state silently propagates as a half-described user story.
 ---
