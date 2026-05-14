@@ -87,7 +87,7 @@ export const analyticsService = {
     >`
       SELECT rp.period AS period, COALESCE(SUM(rp.amount), 0) AS revenue
       FROM rental_payments rp
-      JOIN properties p ON p.id = rp.property_id
+      JOIN properties p ON p.id = rp.property_id::uuid
       WHERE p.landlord_id = ${landlordId}::uuid
         AND rp.status = 'PAID'
         AND rp.period >= ${fromPeriod}
